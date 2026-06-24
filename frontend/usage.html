@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用量统计 - AI 法律助手</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="theme-cold usage-body">
+    <main class="usage-page">
+        <header class="usage-header">
+            <div>
+                <p class="page-kicker">系统管理</p>
+                <h1>用量统计</h1>
+                <p class="page-subtitle">掌握请求量、Token 消耗与 DeepSeek API 成本趋势。</p>
+            </div>
+            <div class="usage-actions">
+                <select id="usage-range">
+                    <option value="7">近 7 天</option>
+                    <option value="30" selected>近 30 天</option>
+                    <option value="90">近 90 天</option>
+                    <option value="365">近 365 天</option>
+                </select>
+                <button class="btn-secondary" id="usage-refresh-btn">刷新</button>
+            </div>
+        </header>
+
+        <section id="usage-auth" class="usage-auth hidden">
+            <div>
+                <h2>用量统计登录</h2>
+                <p>请使用管理员账号登录，登录后将进入统计页面。</p>
+            </div>
+            <label class="usage-login-field" for="usage-username">
+                <span>账号</span>
+                <input id="usage-username" type="text" value="admin" autocomplete="username">
+            </label>
+            <label class="usage-login-field" for="usage-password">
+                <span>密码</span>
+                <input id="usage-password" type="password" autocomplete="current-password">
+            </label>
+            <button class="btn-primary" id="usage-login-btn">登录并进入</button>
+            <p id="usage-login-error" class="usage-login-error hidden"></p>
+        </section>
+
+        <section id="usage-content" class="usage-content hidden">
+            <div class="usage-stat-grid">
+                <div class="usage-stat">
+                    <span>总请求</span>
+                    <strong id="usage-total-requests">0</strong>
+                </div>
+                <div class="usage-stat">
+                    <span>总 Token</span>
+                    <strong id="usage-total-tokens">0</strong>
+                </div>
+                <div class="usage-stat">
+                    <span>输入 Token</span>
+                    <strong id="usage-prompt-tokens">0</strong>
+                </div>
+                <div class="usage-stat">
+                    <span>输出 Token</span>
+                    <strong id="usage-completion-tokens">0</strong>
+                </div>
+                <div class="usage-stat">
+                    <span>估算成本</span>
+                    <strong id="usage-cost">¥0.0000</strong>
+                    <small>按 DeepSeek 官方人民币价</small>
+                </div>
+            </div>
+
+            <section class="usage-insight-grid" aria-label="用量概览图表">
+                <article class="usage-panel usage-chart-panel usage-trend-panel">
+                    <div class="usage-panel-head">
+                        <div>
+                            <h2>Token 消耗趋势</h2>
+                            <p>按天汇总输入与输出 Token</p>
+                        </div>
+                        <div class="usage-chart-legend">
+                            <span><i class="legend-total"></i>总量</span>
+                            <span><i class="legend-input"></i>输入</span>
+                            <span><i class="legend-output"></i>输出</span>
+                        </div>
+                    </div>
+                    <div id="usage-trend-chart" class="usage-trend-chart" role="img" aria-label="每日 Token 消耗趋势图"></div>
+                </article>
+
+                <article class="usage-panel usage-chart-panel">
+                    <div class="usage-panel-head">
+                        <div>
+                            <h2>功能消耗占比</h2>
+                            <p>按总 Token 排名</p>
+                        </div>
+                    </div>
+                    <div id="usage-feature-chart" class="usage-feature-chart"></div>
+                </article>
+            </section>
+
+            <section class="usage-panel usage-explainer">
+                <div class="usage-explainer-copy">
+                    <span class="usage-info-icon">i</span>
+                    <div>
+                        <h2>成本是怎么计算的？</h2>
+                        <p>成本 = 输入 Token ÷ 1,000,000 × 输入单价 + 输出 Token ÷ 1,000,000 × 输出单价，所有金额均为人民币。当前数据未记录缓存命中 Token，因此输入统一按“未命中缓存”价格估算，结果偏保守。</p>
+                    </div>
+                </div>
+                <div id="usage-pricing-list" class="usage-pricing-list"></div>
+                <a id="usage-pricing-source" class="usage-pricing-source" href="https://api-docs.deepseek.com/quick_start/pricing" target="_blank" rel="noreferrer">查看 DeepSeek 官方定价 ↗</a>
+            </section>
+
+            <section class="usage-panel">
+                <div class="usage-panel-head">
+                    <div><h2>按用户统计</h2><p>识别高频用户与主要消耗来源</p></div>
+                </div>
+                <div class="usage-table-wrap">
+                    <table class="usage-table">
+                        <thead>
+                            <tr>
+                                <th>用户</th>
+                                <th>请求</th>
+                                <th>输入</th>
+                                <th>输出</th>
+                                <th>总 Token</th>
+                                <th>成功/失败</th>
+                                <th>成本</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usage-user-rows"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="usage-panel">
+                <div class="usage-panel-head">
+                    <div><h2>按功能统计</h2><p>比较各业务模块的请求和 Token</p></div>
+                </div>
+                <div class="usage-table-wrap">
+                    <table class="usage-table">
+                        <thead>
+                            <tr>
+                                <th>功能</th>
+                                <th>请求</th>
+                                <th>输入</th>
+                                <th>输出</th>
+                                <th>总 Token</th>
+                                <th>成本</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usage-feature-rows"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="usage-panel">
+                <div class="usage-panel-head">
+                    <div><h2>最近记录</h2><p>最近 100 次已记录的模型调用</p></div>
+                </div>
+                <div class="usage-table-wrap">
+                    <table class="usage-table">
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>用户</th>
+                                <th>功能</th>
+                                <th>模型</th>
+                                <th>输入</th>
+                                <th>输出</th>
+                                <th>总 Token</th>
+                                <th>成本</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usage-log-rows"></tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/usage.js"></script>
+</body>
+</html>

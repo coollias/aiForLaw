@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>法规/案例检索工作台 - AI 法律小助手</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+</head>
+<body>
+    <div id="research-page" class="document-page research-page hidden">
+        <aside class="document-nav">
+            <div class="sidebar-header">
+                <a class="logo document-logo" href="/">⚖️ 法律小助手</a>
+            </div>
+            <nav class="scene-nav">
+                <a class="scene-btn" href="/">
+                    <span class="scene-icon">💬</span>
+                    <span class="scene-text">回到对话</span>
+                </a>
+                <a class="scene-btn" href="/document">
+                    <span class="scene-icon">📝</span>
+                    <span class="scene-text">文书工作台</span>
+                </a>
+                <a class="scene-btn active" href="/research">
+                    <span class="scene-icon">📚</span>
+                    <span class="scene-text">检索工作台</span>
+                </a>
+            </nav>
+            <div class="doc-workbench-tips">
+                <strong>适合处理</strong>
+                <span>类案检索</span>
+                <span>法条查询</span>
+                <span>案由判断</span>
+                <span>裁判规则整理</span>
+            </div>
+            <div class="sidebar-footer">
+                <button id="research-logout-btn" class="footer-btn">🚪 退出</button>
+            </div>
+        </aside>
+
+        <main class="document-main">
+            <header class="top-bar">
+                <span class="current-scene">📚 法规/案例检索工作台</span>
+                <div class="top-actions">
+                    <span class="greeting" id="research-greeting">把材料查清楚，再回答问题</span>
+                </div>
+            </header>
+
+            <section class="research-workbench">
+                <section class="research-query-panel">
+                    <div class="panel-heading">
+                        <p class="page-kicker">检索设置</p>
+                        <h1>调整本次检索范围</h1>
+                    </div>
+
+                    <div class="research-options">
+                        <label class="contract-reference-toggle">
+                            <input type="checkbox" id="research-need-cases" checked>
+                            <span>
+                                <strong>需要案例</strong>
+                                <small>要求输出法院、案号、案由、裁判观点等案例信息</small>
+                            </span>
+                        </label>
+                        <label class="contract-reference-toggle">
+                            <input type="checkbox" id="research-need-laws">
+                            <span>
+                                <strong>需要法条</strong>
+                                <small>要求输出法规名称、条号、条文和适用关系</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="research-row">
+                        <label class="contract-type-field">
+                            <span>地域限制</span>
+                            <input id="research-region" type="text" placeholder="例如：北京地区">
+                        </label>
+                        <label class="contract-type-field">
+                            <span>起始日期</span>
+                            <input id="research-date-start" type="date" placeholder="yyyy-MM-dd">
+                        </label>
+                        <label class="contract-type-field">
+                            <span>截止日期</span>
+                            <input id="research-date-end" type="date" placeholder="yyyy-MM-dd">
+                        </label>
+                        <label class="contract-type-field">
+                            <span>输出侧重</span>
+                            <select id="research-focus">
+                                <option value="类案和问题回答并重">类案和问题回答并重</option>
+                                <option value="优先完整案例信息">优先完整案例信息</option>
+                                <option value="优先法条依据">优先法条依据</option>
+                                <option value="优先诉讼策略">优先诉讼策略</option>
+                            </select>
+                        </label>
+                        <label class="contract-type-field">
+                            <span>筛选强度</span>
+                            <select id="research-filter-strength">
+                                <option value="standard">标准：兼顾相关度和数量</option>
+                                <option value="loose">宽松：保留更多候选</option>
+                                <option value="strict">严格：只保留强相关</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div id="research-status-list" class="research-status-list"></div>
+
+                    <div class="research-history-panel">
+                        <div class="history-head">
+                            <strong>检索记录</strong>
+                            <button class="mini-btn" id="research-history-refresh">刷新</button>
+                        </div>
+                        <div id="research-history-list" class="research-history-list"></div>
+                    </div>
+                </section>
+
+                <section class="research-answer-panel">
+                    <div class="preview-head document-preview-head">
+                        <div>
+                            <strong>研究回答</strong>
+                            <span id="research-answer-subtitle">会结合检索材料回答你的问题</span>
+                        </div>
+                        <div class="preview-actions">
+                            <button class="mini-btn" id="research-copy-answer-btn">复制回答</button>
+                            <button class="mini-btn" id="research-clear-btn">清空</button>
+                        </div>
+                    </div>
+                    <div id="research-answer" class="research-chat-stream">
+                        <div class="research-chat-empty">在下方输入问题并发送，回答会显示在这里。案例和法条会在右侧单独展示。</div>
+                    </div>
+                    <div class="research-chat-composer">
+                        <div id="research-file-list" class="selected-files hidden"></div>
+                        <div class="input-box">
+                            <label class="attach-btn" title="上传附件">
+                                📎
+                                <input type="file" id="research-file-input" multiple accept=".txt,.md,.pdf,.doc,.docx,.jpg,.jpeg,.png,.bmp" hidden>
+                            </label>
+                            <textarea id="research-followup-input" rows="3" placeholder="输入检索问题，或上传材料后发送..."></textarea>
+                            <button class="send-btn" id="research-followup-send" title="发送">发送</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="research-reference-panel">
+                    <div class="preview-head document-preview-head">
+                        <div>
+                            <strong>检索材料</strong>
+                            <span id="research-reference-subtitle">等待案例/法条材料</span>
+                        </div>
+                        <div class="preview-actions">
+                            <button class="mini-btn" id="research-copy-refs-btn">复制材料</button>
+                        </div>
+                    </div>
+                    <div class="research-reference-tabs">
+                        <button class="active" data-ref-filter="all">全部</button>
+                        <button data-ref-filter="case">案例</button>
+                        <button data-ref-filter="law">法条</button>
+                    </div>
+                    <div id="research-reference-list" class="research-reference-list">
+                        <div class="empty-preview">检索完成后，这里会展示原始案例/法条材料。</div>
+                    </div>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <div id="research-auth-page" class="login-page hidden">
+        <div class="login-card">
+            <div class="login-avatar">⚖️</div>
+            <h1>法规/案例检索工作台</h1>
+            <p class="login-subtitle">请先回到首页登录，再进入工作台</p>
+            <a class="btn-primary research-login-link" href="/">回到登录</a>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/research_workbench.js"></script>
+</body>
+</html>

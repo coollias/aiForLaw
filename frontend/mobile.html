@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>法律助手 Mobile</title>
+    <link rel="stylesheet" href="/css/mobile.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+</head>
+<body>
+    <section id="mobile-login" class="m-login">
+        <div class="m-login-panel">
+            <div class="m-brand-mark">LAW</div>
+            <h1>法律助手</h1>
+            <p>移动端工作台</p>
+            <label>
+                <span>账号</span>
+                <input id="m-username" type="text" value="admin" autocomplete="username">
+            </label>
+            <label>
+                <span>密码</span>
+                <input id="m-password" type="password" autocomplete="current-password">
+            </label>
+            <button id="m-login-btn" class="m-primary">登录</button>
+            <div id="m-login-error" class="m-error hidden"></div>
+        </div>
+    </section>
+
+    <section id="mobile-app" class="m-app hidden">
+        <header class="m-topbar">
+            <button id="m-session-btn" class="m-icon-btn">☰</button>
+            <div>
+                <div id="m-title" class="m-title">法律问答</div>
+                <div id="m-status" class="m-status">系统在线</div>
+            </div>
+            <button id="m-admin-btn" class="m-admin hidden">管理</button>
+        </header>
+
+        <main id="m-chat-view" class="m-view">
+            <div id="m-welcome" class="m-welcome">
+                <h2>开始处理法律问题</h2>
+                <p>选择下方模式，输入问题或上传材料。</p>
+                <div class="m-quick-grid">
+                    <button data-quick="帮我审查这份合同的风险点">合同风险</button>
+                    <button data-quick="帮我检索几条相关案例">案例检索</button>
+                    <button data-quick="根据材料帮我整理诉讼思路">诉讼思路</button>
+                </div>
+            </div>
+            <div id="m-messages" class="m-messages"></div>
+        </main>
+
+        <section id="m-admin-view" class="m-admin-view hidden">
+            <div class="m-page-head">
+                <div>
+                    <h2>用户管理</h2>
+                    <p id="m-user-summary">加载中...</p>
+                </div>
+                <button id="m-admin-back" class="m-ghost">返回</button>
+            </div>
+            <div class="m-create-user">
+                <input id="m-new-username" type="text" placeholder="新用户名">
+                <input id="m-new-password" type="password" placeholder="初始密码">
+                <label><input id="m-new-admin" type="checkbox"> 管理员</label>
+                <button id="m-create-user-btn" class="m-primary">创建用户</button>
+            </div>
+            <div id="m-user-list" class="m-user-list"></div>
+        </section>
+
+        <aside id="m-session-drawer" class="m-drawer hidden">
+            <div class="m-drawer-mask" id="m-drawer-mask"></div>
+            <div class="m-drawer-panel">
+                <div class="m-drawer-head">
+                    <strong>对话列表</strong>
+                    <button id="m-new-session" class="m-ghost">新建</button>
+                </div>
+                <div id="m-session-list" class="m-session-list"></div>
+                <button id="m-logout-btn" class="m-danger">退出登录</button>
+            </div>
+        </aside>
+
+        <div id="m-files" class="m-files hidden"></div>
+        <footer class="m-composer">
+            <input id="m-file-input" type="file" multiple accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.bmp" hidden>
+            <button id="m-attach-btn" class="m-icon-btn">＋</button>
+            <textarea id="m-input" rows="1" placeholder="输入你的法律问题..."></textarea>
+            <button id="m-send-btn" class="m-send">➤</button>
+        </footer>
+
+        <nav class="m-tabs">
+            <button class="active" data-scene="general">问答</button>
+            <button data-scene="research">查法</button>
+            <button data-scene="contract">合同</button>
+            <button data-scene="document">文书</button>
+        </nav>
+    </section>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/mobile.js"></script>
+</body>
+</html>

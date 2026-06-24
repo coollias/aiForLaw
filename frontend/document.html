@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文书工作台 - AI 法律小助手</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+</head>
+<body>
+    <div id="document-page" class="document-page hidden">
+        <aside class="document-nav">
+            <div class="sidebar-header">
+                <a class="logo document-logo" href="/">⚖️ 法律小助手</a>
+            </div>
+            <nav class="scene-nav">
+                <a class="scene-btn" href="/">
+                    <span class="scene-icon">💬</span>
+                    <span class="scene-text">回到对话</span>
+                </a>
+                <a class="scene-btn active" href="/document">
+                    <span class="scene-icon">📝</span>
+                    <span class="scene-text">文书工作台</span>
+                </a>
+                <a class="scene-btn" href="/research">
+                    <span class="scene-icon">📚</span>
+                    <span class="scene-text">检索工作台</span>
+                </a>
+            </nav>
+            <div class="doc-workbench-tips">
+                <strong>工作流</strong>
+                <span>选择类型</span>
+                <span>补充事实</span>
+                <span>检查缺失</span>
+                <span>生成并导出</span>
+            </div>
+            <div class="sidebar-footer">
+                <button id="document-logout-btn" class="footer-btn">🚪 退出</button>
+            </div>
+        </aside>
+
+        <main class="document-main">
+            <header class="top-bar">
+                <span class="current-scene">📝 文书工作台</span>
+                <div class="top-actions">
+                    <span class="greeting" id="document-greeting">准备起草一份更稳的文书</span>
+                </div>
+            </header>
+
+            <section class="document-workbench">
+                <section class="document-config-panel">
+                    <div class="panel-heading">
+                        <p class="page-kicker">文书配置</p>
+                        <h1>新建文书</h1>
+                    </div>
+
+                    <label class="contract-type-field">
+                        <span>文书类型</span>
+                        <select id="doc-type-select"></select>
+                    </label>
+
+                    <label class="contract-type-field">
+                        <span>案件类型</span>
+                        <select id="case-type-select">
+                            <option value="通用民事纠纷">通用民事纠纷</option>
+                            <option value="民间借贷纠纷">民间借贷纠纷</option>
+                            <option value="买卖合同纠纷">买卖合同纠纷</option>
+                            <option value="房屋租赁纠纷">房屋租赁纠纷</option>
+                            <option value="劳动争议">劳动争议</option>
+                            <option value="婚姻家事纠纷">婚姻家事纠纷</option>
+                            <option value="侵权责任纠纷">侵权责任纠纷</option>
+                        </select>
+                    </label>
+
+                    <label class="contract-type-field">
+                        <span>写作目标</span>
+                        <select id="writing-mode-select">
+                            <option value="正式提交版">正式提交版</option>
+                            <option value="律师初稿">律师初稿</option>
+                            <option value="客户沟通版">客户沟通版</option>
+                            <option value="简明版">简明版</option>
+                        </select>
+                    </label>
+
+                    <label class="contract-reference-toggle">
+                        <input type="checkbox" id="include-law-input" checked>
+                        <span>
+                            <strong>要求列明法律依据</strong>
+                            <small>生成时会提示 AI 给出对应依据</small>
+                        </span>
+                    </label>
+
+                    <label class="contract-reference-toggle">
+                        <input type="checkbox" id="include-evidence-input" checked>
+                        <span>
+                            <strong>同步整理证据目录</strong>
+                            <small>适合诉状、答辩、律师函等</small>
+                        </span>
+                    </label>
+
+                    <label class="document-upload-zone" id="document-upload-zone">
+                        <input type="file" id="document-file-input" multiple accept=".txt,.md,.pdf,.doc,.docx,.jpg,.jpeg,.png,.bmp" hidden>
+                        <span class="upload-icon">材料</span>
+                        <strong>上传案件资料</strong>
+                        <small>支持 PDF / Word / TXT / 图片，可上传合同、借条、聊天记录、转账凭证等</small>
+                    </label>
+                    <div id="document-file-list" class="document-file-list hidden"></div>
+
+                    <div class="document-actions">
+                        <button class="btn-secondary" id="doc-extract-btn">提取到表单</button>
+                        <button class="btn-secondary" id="doc-check-btn">检查缺失信息</button>
+                        <button class="btn-primary" id="doc-generate-workbench-btn">生成文书</button>
+                    </div>
+                    <div id="doc-status" class="contract-review-status hidden"></div>
+                </section>
+
+                <section class="document-form-panel">
+                    <div class="panel-heading list-heading">
+                        <div>
+                            <p class="page-kicker">信息采集</p>
+                            <h2 id="doc-form-title">起草信息</h2>
+                        </div>
+                        <button class="mini-btn" id="doc-clear-btn">清空</button>
+                    </div>
+                    <div id="doc-dynamic-fields" class="document-fields"></div>
+                    <label class="document-field full">
+                        <span>补充要求</span>
+                        <textarea id="doc-extra-input" placeholder="例如：语气更强硬、事实按时间线写、诉请部分尽量具体、保留待补充项等"></textarea>
+                    </label>
+                </section>
+
+                <section class="document-preview-panel">
+                    <div class="preview-head document-preview-head">
+                        <div>
+                            <strong id="doc-preview-title">文书预览</strong>
+                            <span id="doc-preview-subtitle">生成后会显示在这里</span>
+                        </div>
+                        <div class="preview-actions">
+                            <button class="mini-btn" id="doc-copy-btn">复制</button>
+                            <button class="mini-btn" id="doc-download-btn">下载 Word</button>
+                        </div>
+                    </div>
+                    <div id="doc-missing-list" class="document-missing hidden"></div>
+                    <article id="doc-preview-content" class="document-preview-empty">
+                        先在左侧选择文书类型，再补充中间的案件信息。你可以先检查缺失项，也可以直接生成初稿。
+                    </article>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <div id="document-auth-page" class="login-page hidden">
+        <div class="login-card">
+            <div class="login-avatar">⚖️</div>
+            <h1>请先登录</h1>
+            <p class="login-subtitle">文书工作台会复用主页的登录状态。</p>
+            <a class="btn-primary" href="/">去登录</a>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/document_workbench.js"></script>
+</body>
+</html>

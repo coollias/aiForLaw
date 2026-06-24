@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Local editor/agent settings
+.claude/
+.agents/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Secrets and local environment
+.env
+*.env
+!.env.example
+backend/.env
+
+# Local dependency caches
+backend/.deps/
+
+# Runtime user data and generated documents
+backend/uploads/
+backend/exports/
+*.log
+
+# Node/Electron
+node_modules/
+desktop/node_modules/
+desktop/release/
+dist/
+build/
+
+# Generated local artifacts
+语义检索API完整结果.json
+语义检索原始结果.json
+测试_买卖合同纠纷分析报告.docx
