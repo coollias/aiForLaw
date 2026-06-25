@@ -130,6 +130,22 @@ CREATE TABLE IF NOT EXISTS research_messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
+CREATE_TRANSLATION_RECORDS_TABLE = """
+CREATE TABLE IF NOT EXISTS translation_records (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    source_lang VARCHAR(32) NOT NULL DEFAULT 'auto',
+    target_lang VARCHAR(32) NOT NULL DEFAULT '中文',
+    blocks_json LONGTEXT NOT NULL,
+    total_blocks INT NOT NULL DEFAULT 0,
+    translated_blocks INT NOT NULL DEFAULT 0,
+    created_at DOUBLE NOT NULL,
+    updated_at DOUBLE NOT NULL,
+    INDEX idx_user_updated (user_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
 MAX_MESSAGES_PER_SESSION = 200
 
 
@@ -180,6 +196,7 @@ async def init_db(
             await cur.execute(CREATE_CONTRACT_REVIEWS_TABLE)
             await cur.execute(CREATE_RESEARCH_RECORDS_TABLE)
             await cur.execute(CREATE_RESEARCH_MESSAGES_TABLE)
+            await cur.execute(CREATE_TRANSLATION_RECORDS_TABLE)
             # 如果旧表缺 title 列，自动补充
             try:
                 await cur.execute("ALTER TABLE sessions ADD COLUMN title VARCHAR(200) DEFAULT '新对话'")
@@ -969,3 +986,98 @@ async def delete_contract_review(review_id: str, user_id: int) -> Optional[str]:
                 (review_id, user_id),
             )
     return record.get("file_path") or ""
+
+
+# ===== 翻译记录 =====
+
+async def save_translation_record(
+    *,
+    user_id: int,
+    record_id: str,
+    filename: str,
+    source_lang: str,
+    target_lang: str,
+    blocks: list,
+) -> dict:
+    """保存翻译记录"""
+    now = time.time()
+    blocks_json = json.dumps(blocks, ensure_ascii=False)
+    total = len(blocks)
+    translated = sum(1 for b in blocks if b.get("translation", "").strip())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO translation_records "
+                "(id, user_id, filename, source_lang, target_lang, blocks_json, total_blocks, translated_blocks, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE blocks_json = VALUES(blocks_json), "
+                "translated_blocks = VALUES(translated_blocks), updated_at = VALUES(updated_at)",
+                (record_id, user_id, filename, source_lang, target_lang,
+                 blocks_json, total, translated, now, now),
+            )
+    return await get_translation_record(record_id, user_id)
+
+
+async def get_translation_record(record_id: str, user_id: int) -> dict | None:
+    """获取单条翻译记录"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM translation_records WHERE id = %s AND user_id = %s",
+                (record_id, user_id),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        blocks = json.loads(row["blocks_json"]) if row.get("blocks_json") else []
+    except (TypeError, json.JSONDecodeError):
+        blocks = []
+    return {
+        "id": row["id"],
+        "filename": row["filename"],
+        "source_lang": row["source_lang"],
+        "target_lang": row["target_lang"],
+        "blocks": blocks,
+        "total_blocks": row["total_blocks"],
+        "translated_blocks": row["translated_blocks"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def list_translation_records(user_id: int, limit: int = 20) -> list[dict]:
+    """列出用户的翻译历史"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT id, filename, source_lang, target_lang, total_blocks, translated_blocks, created_at, updated_at "
+                "FROM translation_records WHERE user_id = %s ORDER BY updated_at DESC LIMIT %s",
+                (user_id, limit),
+            )
+            rows = await cur.fetchall()
+    return [{
+        "id": r["id"],
+        "filename": r["filename"],
+        "source_lang": r["source_lang"],
+        "target_lang": r["target_lang"],
+        "total_blocks": r["total_blocks"],
+        "translated_blocks": r["translated_blocks"],
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    } for r in rows]
+
+
+async def delete_translation_record(record_id: str, user_id: int) -> bool:
+    """删除翻译记录"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM translation_records WHERE id = %s AND user_id = %s",
+                (record_id, user_id),
+            )
+            return cur.rowcount > 0

@@ -92,9 +92,11 @@ app.add_middleware(
 
 from routes.hallucination import router as hallucination_router
 from routes.usage import router as usage_router
+from routes.translate import router as translate_router
 
 app.include_router(hallucination_router)
 app.include_router(usage_router)
+app.include_router(translate_router)
 
 # ===== 静态文件服务 =====
 frontend_path = Path(__file__).parent.parent / "frontend"
@@ -123,6 +125,11 @@ async def serve_document_workbench():
 @app.get("/research")
 async def serve_research_workbench():
     return FileResponse(frontend_path / "research.html")
+
+
+@app.get("/translate")
+async def serve_translate_page():
+    return FileResponse(frontend_path / "translate.html")
 
 
 @app.get("/usage")
