@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 · AI 法律助手</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/admin.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.min.js"></script>
+</head>
+<body class="theme-cold admin-body">
+
+<!-- ===== 登录页 ===== -->
+<div id="admin-login-page" class="admin-login-page">
+    <div class="admin-login-card">
+        <div class="admin-login-icon">⚖️</div>
+        <h1>管理后台</h1>
+        <p class="admin-login-subtitle">AI 法律助手 · 系统管理</p>
+        <div class="admin-login-form">
+            <label class="admin-field">
+                <span>账号</span>
+                <input type="text" id="admin-login-username" value="admin" autocomplete="username">
+            </label>
+            <label class="admin-field">
+                <span>密码</span>
+                <input type="password" id="admin-login-password" autocomplete="current-password">
+            </label>
+            <button id="admin-login-btn" class="btn-primary">进入管理后台</button>
+            <p id="admin-login-error" class="error-msg hidden">密码错误，请重试</p>
+            <p class="admin-login-back"><a href="/">← 返回首页</a></p>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 管理后台主体 ===== -->
+<div id="admin-app" class="admin-app hidden">
+    <!-- 侧边栏 -->
+    <aside class="admin-sidebar">
+        <div class="admin-sidebar-header">
+            <span class="admin-logo">⚖️ 管理后台</span>
+        </div>
+        <nav class="admin-nav">
+            <button class="admin-nav-item active" data-page="dashboard">
+                <span class="nav-icon">📊</span>
+                <span>控制台</span>
+            </button>
+            <button class="admin-nav-item" data-page="users">
+                <span class="nav-icon">👥</span>
+                <span>用户管理</span>
+            </button>
+            <button class="admin-nav-item" data-page="usage">
+                <span class="nav-icon">📈</span>
+                <span>用量分析</span>
+            </button>
+            <button class="admin-nav-item" data-page="records">
+                <span class="nav-icon">📋</span>
+                <span>操作记录</span>
+            </button>
+        </nav>
+        <div class="admin-sidebar-footer">
+            <div class="admin-user-info">
+                <span class="admin-user-avatar">👤</span>
+                <span id="admin-username-display">admin</span>
+            </div>
+            <button id="admin-back-to-app" class="admin-footer-btn" title="返回首页">🏠 首页</button>
+            <button id="admin-logout-btn" class="admin-footer-btn" title="退出登录">🚪 退出</button>
+        </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="admin-main">
+
+        <!-- ===== 控制台 Dashboard ===== -->
+        <section class="admin-page active" id="page-dashboard">
+            <div class="admin-page-head">
+                <h1>控制台</h1>
+                <p class="page-subtitle">系统运行概览和数据趋势</p>
+            </div>
+
+            <!-- 统计卡片 -->
+            <div class="stat-grid" id="stat-cards">
+                <div class="stat-card"><div class="stat-value" id="stat-total-users">-</div><div class="stat-label">总用户</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-active-users">-</div><div class="stat-label">活跃用户</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-new-users-7d">-</div><div class="stat-label">7日新增</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-sessions-today">-</div><div class="stat-label">今日活跃会话</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-messages-today">-</div><div class="stat-label">今日消息数</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-api-calls-today">-</div><div class="stat-label">今日 API 调用</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-cost-today">-</div><div class="stat-label">今日费用 (¥)</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-cost-30d">-</div><div class="stat-label">30天费用 (¥)</div></div>
+            </div>
+
+            <!-- 图表区 -->
+            <div class="chart-grid">
+                <div class="chart-card">
+                    <h3>📊 每日 API 调用与消息数</h3>
+                    <div class="chart-container"><canvas id="chart-daily-calls"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <h3>💰 每日费用趋势 (¥)</h3>
+                    <div class="chart-container"><canvas id="chart-daily-cost"></canvas></div>
+                </div>
+            </div>
+
+            <!-- 聚合数据 -->
+            <div class="chart-grid">
+                <div class="chart-card">
+                    <h3>📦 累计业务数据</h3>
+                    <div class="summary-grid" id="summary-business">
+                        <div class="summary-item"><strong id="stat-total-sessions">-</strong><span>总会话数</span></div>
+                        <div class="summary-item"><strong id="stat-total-reviews">-</strong><span>合同审查</span></div>
+                        <div class="summary-item"><strong id="stat-total-research">-</strong><span>法规检索</span></div>
+                        <div class="summary-item"><strong id="stat-total-translations">-</strong><span>文件翻译</span></div>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h3>⚡ 近 7 日活跃</h3>
+                    <div class="summary-grid" id="summary-recent">
+                        <div class="summary-item"><strong id="stat-reviews-7d">-</strong><span>合同审查</span></div>
+                        <div class="summary-item"><strong id="stat-research-7d">-</strong><span>法规检索</span></div>
+                        <div class="summary-item"><strong id="stat-api-30d">-</strong><span>30天 API 调用</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== 用户管理 ===== -->
+        <section class="admin-page" id="page-users">
+            <div class="admin-page-head">
+                <h1>用户管理</h1>
+                <p class="page-subtitle">创建账号、分配管理员权限、启停账号</p>
+            </div>
+
+            <div class="admin-toolbar">
+                <div class="admin-toolbar-left">
+                    <span id="user-list-summary" class="toolbar-summary">加载中...</span>
+                </div>
+                <div class="admin-toolbar-right">
+                    <button class="btn-primary" id="admin-show-create-user">+ 新建用户</button>
+                    <button class="btn-secondary" id="admin-refresh-users">刷新</button>
+                </div>
+            </div>
+
+            <!-- 新建用户表单 -->
+            <div class="admin-create-panel hidden" id="admin-create-user-panel">
+                <div class="create-panel-inner">
+                    <h3>新建用户</h3>
+                    <div class="create-form">
+                        <label class="admin-field"><span>用户名</span><input type="text" id="admin-new-username" placeholder="例如 zhangsan"></label>
+                        <label class="admin-field"><span>初始密码</span><input type="password" id="admin-new-password" placeholder="设置初始密码"></label>
+                        <label class="check-row"><input type="checkbox" id="admin-new-is-admin"> 设为管理员</label>
+                        <div class="create-actions">
+                            <button class="btn-primary" id="admin-create-user-btn">创建</button>
+                            <button class="btn-secondary" id="admin-cancel-create-user">取消</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 用户列表 -->
+            <div class="admin-table-wrapper">
+                <table class="admin-table" id="admin-user-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>角色</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-user-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ===== 用量分析 ===== -->
+        <section class="admin-page" id="page-usage">
+            <div class="admin-page-head">
+                <h1>用量分析</h1>
+                <p class="page-subtitle">API 调用统计、Token 消耗和费用明细</p>
+            </div>
+
+            <div class="admin-toolbar">
+                <div class="admin-toolbar-right">
+                    <label class="admin-filter-group">
+                        <span>时间范围</span>
+                        <select id="usage-days-select">
+                            <option value="7">近 7 天</option>
+                            <option value="30" selected>近 30 天</option>
+                            <option value="90">近 90 天</option>
+                            <option value="365">近一年</option>
+                        </select>
+                    </label>
+                    <button class="btn-secondary" id="admin-refresh-usage">刷新</button>
+                </div>
+            </div>
+
+            <!-- 汇总卡片 -->
+            <div class="stat-grid stat-grid-4" id="usage-summary-cards">
+                <div class="stat-card"><div class="stat-value" id="usage-total-calls">-</div><div class="stat-label">请求总数</div></div>
+                <div class="stat-card"><div class="stat-value" id="usage-total-tokens">-</div><div class="stat-label">总 Token</div></div>
+                <div class="stat-card"><div class="stat-value" id="usage-total-cost">-</div><div class="stat-label">总费用 (¥)</div></div>
+                <div class="stat-card"><div class="stat-value" id="usage-failed-count">-</div><div class="stat-label">失败请求</div></div>
+            </div>
+
+            <!-- 每日趋势 -->
+            <div class="chart-card full-width">
+                <h3>📊 每日 Token 消耗趋势</h3>
+                <div class="chart-container" style="height:280px"><canvas id="chart-usage-daily"></canvas></div>
+            </div>
+
+            <!-- 按用户统计 -->
+            <div class="admin-table-caption">按用户统计</div>
+            <div class="admin-table-wrapper">
+                <table class="admin-table" id="usage-by-user-table">
+                    <thead><tr><th>用户</th><th>请求数</th><th>Prompt Token</th><th>Completion Token</th><th>总 Token</th><th>费用 (¥)</th><th>成功/失败</th></tr></thead>
+                    <tbody id="usage-by-user-tbody"></tbody>
+                </table>
+            </div>
+
+            <!-- 按功能统计 -->
+            <div class="admin-table-caption">按功能统计</div>
+            <div class="admin-table-wrapper">
+                <table class="admin-table" id="usage-by-feature-table">
+                    <thead><tr><th>功能</th><th>请求数</th><th>Prompt Token</th><th>Completion Token</th><th>总 Token</th><th>费用 (¥)</th></tr></thead>
+                    <tbody id="usage-by-feature-tbody"></tbody>
+                </table>
+            </div>
+
+            <!-- 按模型统计 -->
+            <div class="admin-table-caption">按模型统计</div>
+            <div class="admin-table-wrapper">
+                <table class="admin-table" id="usage-by-model-table">
+                    <thead><tr><th>模型</th><th>请求数</th><th>Prompt Token</th><th>Completion Token</th><th>总 Token</th><th>费用 (¥)</th><th>单价 I/O (¥/1M)</th></tr></thead>
+                    <tbody id="usage-by-model-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ===== 操作记录 ===== -->
+        <section class="admin-page" id="page-records">
+            <div class="admin-page-head">
+                <h1>操作记录</h1>
+                <p class="page-subtitle">查看所有用户的合同审查、法规检索和翻译记录</p>
+            </div>
+
+            <!-- Tabs -->
+            <div class="admin-tabs" role="tablist">
+                <button class="admin-tab active" data-record-tab="contracts">合同审查</button>
+                <button class="admin-tab" data-record-tab="research">法规检索</button>
+                <button class="admin-tab" data-record-tab="translations">文件翻译</button>
+            </div>
+
+            <!-- 过滤器 |
+            <div class="admin-toolbar" id="records-toolbar">
+                <div class="admin-toolbar-left">
+                    <label class="admin-filter-group">
+                        <span>用户名</span>
+                        <input type="text" id="records-username-filter" placeholder="搜索用户名" class="filter-input">
+                    </label>
+                    <label class="admin-filter-group">
+                        <span>开始</span>
+                        <input type="date" id="records-start-date" class="filter-input">
+                    </label>
+                    <label class="admin-filter-group">
+                        <span>结束</span>
+                        <input type="date" id="records-end-date" class="filter-input">
+                    </label>
+                    <button class="btn-secondary" id="records-search-btn">搜索</button>
+                </div>
+            </div>
+
+            <!-- 表格容器 -->
+            <div class="admin-table-wrapper">
+                <table class="admin-table" id="records-table">
+                    <thead id="records-thead"></thead>
+                    <tbody id="records-tbody"></tbody>
+                </table>
+            </div>
+
+            <!-- 分页 -->
+            <div class="admin-pagination" id="records-pagination">
+                <button class="mini-btn" id="records-prev-page">← 上一页</button>
+                <span id="records-page-info">第 1 页</span>
+                <button class="mini-btn" id="records-next-page">下一页 →</button>
+            </div>
+        </section>
+
+    </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>

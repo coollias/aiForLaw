@@ -93,10 +93,12 @@ app.add_middleware(
 from routes.hallucination import router as hallucination_router
 from routes.usage import router as usage_router
 from routes.translate import router as translate_router
+from routes.admin import router as admin_router
 
 app.include_router(hallucination_router)
 app.include_router(usage_router)
 app.include_router(translate_router)
+app.include_router(admin_router)
 
 # ===== 静态文件服务 =====
 frontend_path = Path(__file__).parent.parent / "frontend"
@@ -110,6 +112,11 @@ for subdir in ["css", "js", "assets"]:
 @app.get("/")
 async def serve_index():
     return FileResponse(frontend_path / "index.html")
+
+
+@app.get("/admin")
+async def serve_admin():
+    return FileResponse(frontend_path / "admin.html")
 
 
 @app.get("/mobile")

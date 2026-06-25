@@ -24,6 +24,7 @@ const TranslateApp = {
         this.bindBlockClicks();
         this.bindHistory();
         await this.restoreLatest();
+        await this.loadHistoryList();
     },
 
     bindUpload() {
@@ -87,6 +88,7 @@ const TranslateApp = {
         if (!this.recordId || !this.blocks.length) return;
         try { await fetch('/api/translate/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ id: this.recordId, filename: this.currentFileName, source_lang: this.sourceLang, target_lang: this.targetLang, blocks: this.blocks }) }); }
         catch (e) { console.warn('保存失败:', e); }
+        this.loadHistoryList();
     },
 
     async restoreLatest() {
@@ -116,16 +118,17 @@ const TranslateApp = {
     },
 
     bindHistory() {
-        document.getElementById('history-btn').addEventListener('click', () => this.showHistoryList());
+        document.getElementById('history-refresh-btn')?.addEventListener('click', () => this.loadHistoryList());
     },
 
-    async showHistoryList() {
+    async loadHistoryList() {
+        const list = document.getElementById('history-list');
+        if (!list) return;
+        list.innerHTML = '<div class="history-empty">加载中...</div>';
         try {
             const resp = await fetch('/api/translate/history', { credentials: 'include' });
             if (!resp.ok) return;
             const records = (await resp.json()).records || [];
-            const list = document.getElementById('history-list');
-            const modal = document.getElementById('history-modal');
             if (!records.length) { list.innerHTML = '<div class="history-empty">暂无历史记录</div>'; }
             else {
                 list.innerHTML = records.map(function(r) {
@@ -134,14 +137,13 @@ const TranslateApp = {
                     return '<div class="history-item ' + active + '" data-id="' + r.id + '"><div><div class="history-item-name">' + TranslateApp.escapeHtml(r.filename) + '</div><div class="history-item-meta">' + r.source_lang + ' → ' + r.target_lang + ' · ' + r.translated_blocks + '/' + r.total_blocks + ' 段 (' + pct + '%)</div></div><button class="history-delete-btn" data-id="' + r.id + '">删除</button></div>';
                 }).join('');
                 list.querySelectorAll('.history-item').forEach(function(el) {
-                    el.addEventListener('click', function(e) { if (e.target.closest('.history-delete-btn')) return; TranslateApp.loadHistoryRecord(el.dataset.id); modal.classList.add('hidden'); });
+                    el.addEventListener('click', function(e) { if (e.target.closest('.history-delete-btn')) return; TranslateApp.loadHistoryRecord(el.dataset.id); });
                 });
                 list.querySelectorAll('.history-delete-btn').forEach(function(btn) {
                     btn.addEventListener('click', async function(e) {
                         e.stopPropagation();
                         if (!confirm('确定删除？')) return;
                         await TranslateApp.deleteHistoryRecord(btn.dataset.id);
-                        btn.closest('.history-item').remove();
                         if (btn.dataset.id === TranslateApp.recordId) {
                             TranslateApp.blocks = []; TranslateApp.recordId = ''; TranslateApp.isDone = false;
                             document.getElementById('source-content').innerHTML = '<div class="empty-panel">上传文件后这里将显示原文</div>';
@@ -151,11 +153,10 @@ const TranslateApp = {
                             document.getElementById('progress-area').classList.add('hidden');
                             document.getElementById('file-info').classList.add('hidden');
                         }
+                        TranslateApp.loadHistoryList();
                     });
                 });
             }
-            modal.classList.remove('hidden');
-            modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.add('hidden'); });
         } catch (e) { alert('加载历史记录失败: ' + e.message); }
     },
 
@@ -171,14 +172,17 @@ const TranslateApp = {
             document.getElementById('target-lang-label').textContent = detail.target_lang;
             this.renderSource(); this.renderTarget();
             document.getElementById('translate-btn').disabled = false;
+            document.getElementById('progress-area').classList.add('hidden');
             var t = detail.translated_blocks || 0, n = detail.total_blocks || 1;
             this.isDone = t >= n;
             if (t > 0) {
+                document.getElementById('progress-area').classList.remove('hidden');
                 document.getElementById('progress-fill').style.width = Math.round(t / n * 100) + '%';
                 document.getElementById('progress-text').textContent = this.isDone ? '翻译完成 ' + t + '/' + n + ' 段' : '已翻译 ' + t + '/' + n + ' 段';
             }
             if (this.isDone) document.getElementById('export-area').classList.remove('hidden');
             else document.getElementById('export-area').classList.add('hidden');
+            this.loadHistoryList();
         } catch (e) { alert('加载失败: ' + e.message); }
     },
 

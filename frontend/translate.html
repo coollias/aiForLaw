@@ -10,51 +10,22 @@
 </head>
 <body>
     <div id="app-page" class="app-page">
-        <!-- 侧边栏 -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <span class="logo">⚖️ 法律小助手</span>
+        <!-- 翻译历史侧栏 -->
+        <aside class="translate-history-sidebar">
+            <div class="translate-history-header">
+                <div>
+                    <span class="translate-history-kicker">文件翻译</span>
+                    <h2>历史记录</h2>
+                </div>
+                <button class="history-refresh-btn" id="history-refresh-btn" title="刷新历史">刷新</button>
             </div>
 
-            <div class="session-list-wrapper">
-                <div class="session-list-header">
-                    <span>💬 对话列表</span>
-                    <button id="new-session-btn" class="new-session-btn" title="新建对话">+</button>
-                </div>
-                <div class="session-list" id="session-list">
-                    <!-- 动态填充 -->
-                </div>
+            <div class="translate-history-list" id="history-list">
+                <div class="history-empty">加载中...</div>
             </div>
 
-            <nav class="scene-nav">
-                <button class="scene-btn" data-scene="general" onclick="location.href='/'">
-                    <span class="scene-icon">💬</span>
-                    <span class="scene-text">法律问答</span>
-                </button>
-                <button class="scene-btn" data-scene="document" onclick="location.href='/document'">
-                    <span class="scene-icon">📝</span>
-                    <span class="scene-text">写文书</span>
-                </button>
-                <button class="scene-btn" data-scene="research" onclick="location.href='/research'">
-                    <span class="scene-icon">📚</span>
-                    <span class="scene-text">查法规/案例</span>
-                </button>
-                <button class="scene-btn active" data-scene="translate">
-                    <span class="scene-icon">🌐</span>
-                    <span class="scene-text">文件翻译</span>
-                </button>
-                <button class="scene-btn" data-scene="contract" onclick="location.href='/'">
-                    <span class="scene-icon">📋</span>
-                    <span class="scene-text">审查合同</span>
-                </button>
-                <button class="scene-btn" data-scene="hallucination" onclick="location.href='/'">
-                    <span class="scene-icon">✓</span>
-                    <span class="scene-text">幻觉校验</span>
-                </button>
-            </nav>
-
-            <div class="sidebar-footer">
-                <button id="logout-btn" class="footer-btn">🚪 退出</button>
+            <div class="translate-history-footer">
+                <button class="btn-secondary" id="back-to-chat-btn" onclick="location.href='/'">← 返回对话</button>
             </div>
         </aside>
 
@@ -65,10 +36,6 @@
                 <div class="translate-toolbar-left">
                     <h1 class="translate-title">🌐 文件翻译</h1>
                     <p class="translate-subtitle">上传 PDF / DOCX / TXT，左右对照阅读，点击段落联动跳转</p>
-                </div>
-                <div class="translate-toolbar-right">
-                    <button class="btn-secondary" id="history-btn">📋 历史记录</button>
-                    <button class="btn-secondary" id="back-to-chat-btn" onclick="location.href='/'">← 返回对话</button>
                 </div>
             </header>
 
@@ -168,19 +135,6 @@
                 </section>
             </div>
         </main>
-    </div>
-
-    <!-- 历史记录弹窗 -->
-    <div id="history-modal" class="modal-overlay hidden">
-        <div class="modal-card">
-            <h2 id="doc-modal-title">📋 翻译历史</h2>
-            <div class="modal-body" id="history-list" style="max-height:60vh;overflow-y:auto;">
-                <!-- 动态填充 -->
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="document.getElementById('history-modal').classList.add('hidden')">关闭</button>
-            </div>
-        </div>
     </div>
 
     <script type="module">
