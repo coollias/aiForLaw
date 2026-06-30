@@ -1076,6 +1076,11 @@ body.theme-cold .mini-btn:hover {
     background: #e7f4ff;
 }
 
+.reference-badge.web {
+    color: #7c3aed;
+    background: #f3e8ff;
+}
+
 .reference-origin {
     flex: 0 0 auto;
     padding: 2px 7px;
@@ -1365,7 +1370,7 @@ body.theme-cold .mini-btn:hover {
 .input-box {
     display: flex;
     align-items: flex-end;
-    gap: 10px;
+    gap: 6px;
     background: var(--pink-50);
     border: 2px solid var(--border);
     border-radius: var(--radius-md);
@@ -1425,6 +1430,80 @@ body.theme-cold .mini-btn:hover {
     opacity: 0.5;
     cursor: not-allowed;
     transform: none;
+}
+
+/* ===== 联网搜索开关（Toggle Switch） ===== */
+.web-search-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 8px 0 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: var(--transition);
+    font-size: 12px;
+    flex-shrink: 0;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.web-search-toggle:hover {
+    border-color: var(--pink-300);
+}
+
+.web-search-toggle.active {
+    border-color: #7c3aed;
+    background: #f3e8ff;
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+/* 开关轨道 */
+.toggle-track {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    border-radius: 99px;
+    background: var(--border);
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.web-search-toggle.active .toggle-track {
+    background: #7c3aed;
+}
+
+/* 开关滑块 */
+.toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    transition: var(--transition);
+}
+
+.web-search-toggle.active .toggle-thumb {
+    left: 16px;
+    background: white;
+}
+
+/* 联网标签文字 */
+.toggle-label {
+    font-weight: 500;
+    color: var(--text-muted);
+    white-space: nowrap;
+    transition: var(--transition);
+}
+
+.web-search-toggle.active .toggle-label {
+    color: #7c3aed;
+    font-weight: 600;
 }
 
 /* ===== 附件上传 ===== */

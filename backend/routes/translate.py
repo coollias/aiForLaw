@@ -155,15 +155,19 @@ async def translate_export(request: Request):
         import re
         plain = re.sub(r"[#*`>|-]", "", markdown)
         plain = re.sub(r"\n{3,}", "\n\n", plain).strip()
+        from urllib.parse import quote
+        safe_title = quote(title)
         data = plain.encode("utf-8")
         return Response(
             content=data,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{title}.txt"'},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_title}.txt"},
         )
 
     # 默认导出 DOCX — 使用 _md_to_docx 直接输出 bytes
+    from urllib.parse import quote
     from document_templates import _md_to_docx
+    safe_title = quote(title)
     doc = _md_to_docx(markdown, title)
     buf = BytesIO()
     doc.save(buf)
@@ -171,7 +175,7 @@ async def translate_export(request: Request):
     return Response(
         content=buf.read(),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{title}.docx"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_title}.docx"},
     )
 
 

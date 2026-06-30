@@ -67,8 +67,9 @@ async def startup_event():
 
     from mcp_client import init_mcp, refresh_tools
     YUANDIAN_API_KEY = os.getenv("YUANDIAN_API_KEY", "")
+    ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
     YUANDIAN_MCP_ENABLED = os.getenv("YUANDIAN_MCP_ENABLED", "true").lower() == "true"
-    init_mcp(api_key=YUANDIAN_API_KEY, enabled=YUANDIAN_MCP_ENABLED)
+    init_mcp(api_key=YUANDIAN_API_KEY, zhipu_api_key=ZHIPU_API_KEY, enabled=YUANDIAN_MCP_ENABLED)
     await refresh_tools()
 
 
@@ -783,6 +784,7 @@ async def chat(request: Request):
         display_message = body.get("display_message") or message
         scene = body.get("scene", "general")
         files = body.get("files", [])  # 附件列表 [{name, mime_type, data(base64)}]
+        web_search_enabled = body.get("web_search_enabled", False)
     except Exception:
         raise HTTPException(status_code=400, detail="无效的请求")
 
@@ -820,6 +822,12 @@ async def chat(request: Request):
     history = await get_messages(token)
     system_prompt = get_prompt(scene)
 
+    # 如果开启了联网搜索，在系统提示词中追加通知
+    if web_search_enabled:
+        system_prompt += "\n\n你拥有联网搜索工具（webSearchPrime）。当用户的问题涉及最新法规动态、时事新闻、你不确定的判例或需要最新信息时，请主动调用联网搜索工具获取最新资料，然后再结合法律知识回答。就像你使用法规检索和案例检索一样自然地使用它。"
+    else:
+        system_prompt += "\n\n注意：你当前没有联网搜索能力，仅基于自身训练数据和已提供的法规/案例检索结果回答。"
+
     # 合并工具
     from ai_client import LEGAL_TOOLS, get_ai_client, DEEPSEEK_MODEL
     from mcp_client import (
@@ -831,6 +839,13 @@ async def chat(request: Request):
     )
 
     mcp_tools = get_mcp_tool_definitions() if is_mcp_available() else []
+
+    # 如果关闭了联网搜索，过滤掉智谱相关的 MCP 工具
+    if mcp_tools and not web_search_enabled:
+        mcp_tools = [
+            t for t in mcp_tools
+            if not t.get("function", {}).get("name", "").startswith("yuandian_zhipu_")
+        ]
     all_tools = LEGAL_TOOLS + mcp_tools if mcp_tools else LEGAL_TOOLS
 
     def format_tool_name(tool_name: str) -> str:
@@ -840,6 +855,8 @@ async def chat(request: Request):
             return "案例检索"
         if tool_name == "get_law_detail":
             return "法条详情查询"
+        if tool_name.startswith("yuandian_zhipu_"):
+            return "联网搜索"
         if tool_name.startswith("yuandian_law_"):
             return "元典法规检索"
         if tool_name.startswith("yuandian_case_"):
@@ -848,6 +865,8 @@ async def chat(request: Request):
             return "元典企业信息查询"
         if tool_name.startswith("yuandian_"):
             return "元典法律工具"
+        if tool_name == "webSearchPrime" or tool_name.startswith("zhipu_"):
+            return "联网搜索"
         return tool_name
 
     def summarize_tool_args(args: dict) -> str:
@@ -1326,6 +1345,17 @@ JSON 格式：
                                 "title": f"案例材料：{readable_args or readable_tool_name}",
                                 "query": readable_args,
                                 "reason": "模型主动调用案例检索",
+                                "content": str(result or "")[:20000],
+                            }]
+                        })
+                    elif tool_name.startswith("yuandian_zhipu_"):
+                        yield sse_payload({
+                            "references": [{
+                                "id": f"web-tool-{tc['id']}",
+                                "type": "web",
+                                "title": f"联网搜索：{readable_args or readable_tool_name}",
+                                "query": readable_args,
+                                "reason": "模型主动调用联网搜索",
                                 "content": str(result or "")[:20000],
                             }]
                         })

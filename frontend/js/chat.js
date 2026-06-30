@@ -17,7 +17,16 @@ const Chat = {
             fileInput: document.getElementById('file-input'),
             attachBtn: document.getElementById('attach-btn'),
             selectedFiles: document.getElementById('selected-files'),
+            webSearchToggle: document.getElementById('web-search-toggle'),
         };
+        this.webSearchEnabled = false;
+
+        // 联网搜索开关
+        if (this.el.webSearchToggle) {
+            this.el.webSearchToggle.addEventListener('click', (e) => {
+                this.toggleWebSearch();
+            });
+        }
 
         // 发送
         this.el.sendBtn.addEventListener('click', () => this.send());
@@ -77,6 +86,14 @@ const Chat = {
             this.el.input.style.height = 'auto';
             this.el.input.style.height = Math.min(this.el.input.scrollHeight, 120) + 'px';
         });
+    },
+
+    toggleWebSearch() {
+        this.webSearchEnabled = !this.webSearchEnabled;
+        const btn = this.el.webSearchToggle;
+        if (btn) {
+            btn.classList.toggle('active', this.webSearchEnabled);
+        }
     },
 
     addFile(file) {
@@ -218,7 +235,8 @@ const Chat = {
             (references) => {
                 this.addReferences(aiMsgEl, references);
                 this.scrollToBottom();
-            }
+            },
+            { webSearchEnabled: this.webSearchEnabled }
         );
     },
 
@@ -346,9 +364,11 @@ const Chat = {
 
         const caseCount = refs.filter(ref => ref.type === 'case').length;
         const lawCount = refs.filter(ref => ref.type === 'law').length;
+        const webCount = refs.filter(ref => ref.type === 'web').length;
         const summary = [
             caseCount ? `${caseCount} 组案例材料` : '',
             lawCount ? `${lawCount} 组法条材料` : '',
+            webCount ? `${webCount} 组联网搜索结果` : '',
         ].filter(Boolean).join('，');
 
         box.classList.remove('hidden');
@@ -364,8 +384,8 @@ const Chat = {
     },
 
     renderReferenceCard(ref, index) {
-        const type = ref.type === 'case' ? '案例' : '法条';
-        const badgeClass = ref.type === 'case' ? 'case' : 'law';
+        const type = ref.type === 'case' ? '案例' : (ref.type === 'web' ? '网络' : '法条');
+        const badgeClass = ref.type === 'case' ? 'case' : (ref.type === 'web' ? 'web' : 'law');
         const title = ref.title || `${type}材料 ${index + 1}`;
         const reason = ref.reason || '';
         const query = ref.query || '';

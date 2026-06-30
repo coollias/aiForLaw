@@ -126,6 +126,7 @@ const API = {
      */
     async chatStream(message, scene, files, onChunk, onDone, onError, onStatus, onReferences, options = {}) {
         try {
+            const web_search_enabled = options.webSearchEnabled === true;
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -135,6 +136,7 @@ const API = {
                     scene,
                     files: files || [],
                     display_message: options.displayMessage || '',
+                    web_search_enabled,  // 联网搜索开关
                 }),
             });
 

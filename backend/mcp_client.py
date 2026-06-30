@@ -17,7 +17,7 @@ import httpx
 from mcp.client.streamable_http import streamable_http_client
 from mcp import ClientSession
 
-# ===== 元典 MCP 服务器配置 =====
+# ===== MCP 服务器配置 =====
 MCP_SERVERS = {
     "law": {
         "key": "law",
@@ -34,10 +34,23 @@ MCP_SERVERS = {
         "url": "https://open.chineselaw.com/mcp/company/stream",
         "name": "元典企业信息",
     },
+    "zhipu_search": {
+        "key": "zhipu_search",
+        "url": "https://open.bigmodel.cn/api/mcp/web_search_prime/mcp",
+        "name": "智谱AI联网搜索",
+    },
 }
+
+# 服务分组（决定使用哪个 API Key）
+MCP_SERVER_GROUPS = {
+    "zhipu_search": "zhipu",
+}
+# 默认分组
+DEFAULT_GROUP = "yuandian"
 
 # ===== 全局状态 =====
 _mcp_api_key: str = ""
+_zhipu_api_key: str = ""
 _mcp_enabled: bool = False
 # 缓存: OpenAI 格式的工具定义列表
 _mcp_tool_definitions: list[dict] = []
@@ -48,19 +61,24 @@ _initialized: bool = False
 # ===== 持久化连接池（问题3修复） =====
 # _mcp_connections[server_key] = {"stack": AsyncExitStack, "session": ClientSession}
 _mcp_connections: dict[str, dict] = {}
-_mcp_http_client: httpx.AsyncClient | None = None
+# 分组 httpx 客户端: group -> httpx.AsyncClient
+_mcp_http_clients: dict[str, httpx.AsyncClient] = {}
 _mcp_conn_lock = asyncio.Lock()
 
 
-def init_mcp(api_key: str = "", enabled: bool = True):
+def init_mcp(api_key: str = "", zhipu_api_key: str = "", enabled: bool = True):
     """初始化 MCP 配置"""
-    global _mcp_api_key, _mcp_enabled
+    global _mcp_api_key, _zhipu_api_key, _mcp_enabled, _initialized
     _mcp_api_key = api_key
-    _mcp_enabled = enabled and bool(api_key)
+    _zhipu_api_key = zhipu_api_key
+    has_any_key = bool(api_key) or bool(zhipu_api_key)
+    _mcp_enabled = enabled and has_any_key
+    _initialized = False
     if _mcp_enabled:
-        print(f"[MCP] 元典 MCP 已启用 (3 个服务)")
+        server_count = len(MCP_SERVERS)
+        print(f"[MCP] MCP 已启用 ({server_count} 个服务, 含智谱 AI 联网搜索)")
     else:
-        print("[MCP] 元典 MCP 未启用")
+        print("[MCP] MCP 未启用")
 
 
 def is_mcp_available() -> bool:
@@ -100,11 +118,16 @@ async def _connect_and_list_tools(server_key: str) -> list[dict]:
             }
 
             # 转为 OpenAI function calling 格式
+            # 智谱搜索工具：使用更清晰的中文描述
+            description = tool.description or tool.name
+            if server_key == "zhipu_search":
+                description = "联网搜索互联网上的最新信息。当用户问到时事、新闻、最新法规动态、不确定法律数据库是否覆盖的问题时，使用此工具。参数 search_query 为搜索关键词，count 为返回结果数量（默认5），search_recency_filter 可选 oneDay/oneWeek/oneMonth/oneYear。"
+
             tools.append({
                 "type": "function",
                 "function": {
                     "name": unique_name,
-                    "description": f"[{cfg['name']}] {tool.description or tool.name}",
+                    "description": f"[{cfg['name']}] {description}",
                     "parameters": tool.inputSchema if tool.inputSchema else {
                         "type": "object",
                         "properties": {
@@ -157,18 +180,24 @@ async def refresh_tools():
 
 # ===== 持久化连接管理（问题3修复） =====
 
-async def _get_http_client() -> httpx.AsyncClient:
-    """获取全局 httpx 客户端（复用 TCP 连接池，携带认证头）"""
-    global _mcp_http_client
-    if _mcp_http_client is None:
-        _mcp_http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0, connect=15.0),
-            headers={
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {_mcp_api_key}",
-            },
-        )
-    return _mcp_http_client
+async def _get_http_client(server_key: str = "") -> httpx.AsyncClient:
+    """获取分组 httpx 客户端（按服务器使用不同的 API Key）"""
+    group = MCP_SERVER_GROUPS.get(server_key, DEFAULT_GROUP)
+    api_key = _zhipu_api_key if group == "zhipu" else _mcp_api_key
+
+    existing = _mcp_http_clients.get(group)
+    if existing:
+        return existing
+
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(120.0, connect=15.0),
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+    _mcp_http_clients[group] = client
+    return client
 
 
 async def _ensure_connection(server_key: str) -> dict | None:
@@ -183,16 +212,12 @@ async def _ensure_connection(server_key: str) -> dict | None:
 
     cfg = MCP_SERVERS[server_key]
     url = cfg["url"]
-    headers = {
-        "Accept": "application/json, text/event-stream",
-        "Authorization": f"Bearer {_mcp_api_key}",
-    }
 
     try:
         stack = contextlib.AsyncExitStack()
 
-        # 复用全局 http client（保持 TCP 连接池）
-        http_client = await _get_http_client()
+        # 复用分组 http client
+        http_client = await _get_http_client(server_key)
 
         # 进入 transport 上下文（保持连接不断开）
         # 使用非 deprecated 版本以传入自定义 http_client
@@ -233,7 +258,7 @@ async def _ensure_connection(server_key: str) -> dict | None:
 
 async def close_mcp_connections():
     """关闭所有持久化 MCP 连接（应用 shutdown 时调用）"""
-    global _mcp_connections, _mcp_http_client
+    global _mcp_connections, _mcp_http_clients
 
     for server_key, conn in list(_mcp_connections.items()):
         try:
@@ -245,12 +270,12 @@ async def close_mcp_connections():
 
     _mcp_connections.clear()
 
-    if _mcp_http_client is not None:
+    for group, client in _mcp_http_clients.items():
         try:
-            await _mcp_http_client.aclose()
+            await client.aclose()
         except Exception:
             pass
-        _mcp_http_client = None
+    _mcp_http_clients.clear()
 
     print("[MCP] 所有持久化连接已关闭")
 

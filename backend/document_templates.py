@@ -52,7 +52,7 @@ def _append_inline_runs(paragraph, text: str, base_size: Pt = Pt(12)):
     # 1a. 内联代码 `code`
     code_map = {}
     def _code_repl(m):
-        ph = f"\x01CODE{len(code_map)}\x01"
+        ph = f"～CD{len(code_map)}～"
         code_map[ph] = m.group(1)
         return ph
     text = _INLINE_CODE_RE.sub(_code_repl, text)
@@ -60,7 +60,7 @@ def _append_inline_runs(paragraph, text: str, base_size: Pt = Pt(12)):
     # 1b. 链接 [text](url)
     link_map = {}
     def _link_repl(m):
-        ph = f"\x02LINK{len(link_map)}\x02"
+        ph = f"～LK{len(link_map)}～"
         link_map[ph] = (m.group(1), m.group(2))
         return ph
     text = _LINK_RE.sub(_link_repl, text)
@@ -70,7 +70,7 @@ def _append_inline_runs(paragraph, text: str, base_size: Pt = Pt(12)):
     # 2a. 先替换 ***bold+italic*** 为占位符
     bi_map = {}
     def _bi_repl(m):
-        ph = f"\x03BI{len(bi_map)}\x03"
+        ph = f"～BI{len(bi_map)}～"
         bi_map[ph] = m.group(1)
         return ph
     text = _BOLD_ITALIC_RE.sub(_bi_repl, text)
@@ -78,7 +78,7 @@ def _append_inline_runs(paragraph, text: str, base_size: Pt = Pt(12)):
     # 2b. 再替换 **bold** 为占位符（此时不会误吞 ***，因为已被保护）
     b_map = {}
     def _b_repl(m):
-        ph = f"\x04B{len(b_map)}\x04"
+        ph = f"～BD{len(b_map)}～"
         b_map[ph] = m.group(1)
         return ph
     text = _BOLD_RE.sub(_b_repl, text)
@@ -86,7 +86,7 @@ def _append_inline_runs(paragraph, text: str, base_size: Pt = Pt(12)):
     # 2c. 最后替换 *italic*（此时不会误伤 ** 或 ***）
     i_map = {}
     def _i_repl(m):
-        ph = f"\x05I{len(i_map)}\x05"
+        ph = f"～IT{len(i_map)}～"
         i_map[ph] = m.group(1)
         return ph
     text = _ITALIC_RE.sub(_i_repl, text)
@@ -181,6 +181,10 @@ def _md_to_docx(content: str, title: str) -> Document:
     将 Markdown 内容转换为 Word 文档。
     支持：标题、加粗/斜体、内联代码、代码块、表格、引用、列表、分隔线。
     """
+    # 预处理：剥离 HTML 标签（LLM 有时会输出 HTML 表格）
+    content = re.sub(r"<[^>]+>", "", content)
+    # 清理 HTML 剥离后多余的空行
+    content = re.sub(r"\n{4,}", "\n\n", content)
     doc = Document()
 
     # ── 页面设置：A4 纸张，左侧装订边距 ──
