@@ -11,7 +11,7 @@ from typing import Optional
 
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -42,93 +42,101 @@ def _set_run_font(run, name: str = "宋体", size: Optional[Pt] = None,
 
 
 def _append_inline_runs(paragraph, text: str, base_size: Pt = Pt(12)):
-    """把一行 Markdown 内联语法拆成多个 run 写入 paragraph。"""
-    # 先把 inline code 保护起来，避免被后面的正则误伤
-    code_placeholders = {}
+    """把一行 Markdown 内联语法拆成多个 run 写入 paragraph。
 
-    def _hide_code(m):
-        placeholder = f"￰CODE{len(code_placeholders)}￰"
-        code_placeholders[placeholder] = m.group(1)
-        return placeholder
-    text = _INLINE_CODE_RE.sub(_hide_code, text)
+    策略：从高优先级到低优先级，先把 *** 和 ** 替换成占位符，
+    剩下的单 * 就不会误吞多星号内容，最后统一还原。
+    """
+    # ===== 1. 保护优先处理的内容 =====
 
-    # 同理保护链接
-    link_placeholders = {}
+    # 1a. 内联代码 `code`
+    code_map = {}
+    def _code_repl(m):
+        ph = f"\x01CODE{len(code_map)}\x01"
+        code_map[ph] = m.group(1)
+        return ph
+    text = _INLINE_CODE_RE.sub(_code_repl, text)
 
-    def _hide_link(m):
-        placeholder = f"￱LINK{len(link_placeholders)}￱"
-        link_placeholders[placeholder] = (m.group(1), m.group(2))
-        return placeholder
-    text = _LINK_RE.sub(_hide_link, text)
+    # 1b. 链接 [text](url)
+    link_map = {}
+    def _link_repl(m):
+        ph = f"\x02LINK{len(link_map)}\x02"
+        link_map[ph] = (m.group(1), m.group(2))
+        return ph
+    text = _LINK_RE.sub(_link_repl, text)
 
-    # 累计剩余未匹配位置
+    # ===== 2. 逐层替换星号标记 =====
+
+    # 2a. 先替换 ***bold+italic*** 为占位符
+    bi_map = {}
+    def _bi_repl(m):
+        ph = f"\x03BI{len(bi_map)}\x03"
+        bi_map[ph] = m.group(1)
+        return ph
+    text = _BOLD_ITALIC_RE.sub(_bi_repl, text)
+
+    # 2b. 再替换 **bold** 为占位符（此时不会误吞 ***，因为已被保护）
+    b_map = {}
+    def _b_repl(m):
+        ph = f"\x04B{len(b_map)}\x04"
+        b_map[ph] = m.group(1)
+        return ph
+    text = _BOLD_RE.sub(_b_repl, text)
+
+    # 2c. 最后替换 *italic*（此时不会误伤 ** 或 ***）
+    i_map = {}
+    def _i_repl(m):
+        ph = f"\x05I{len(i_map)}\x05"
+        i_map[ph] = m.group(1)
+        return ph
+    text = _ITALIC_RE.sub(_i_repl, text)
+
+    # ===== 3. 按占位符顺序分段 emit =====
+    all_ph = {**code_map, **link_map, **bi_map, **b_map, **i_map}
+
     remaining = text
-    last_end = 0
-    patterns = [
-        (_BOLD_ITALIC_RE, True, True),
-        (_BOLD_RE, True, False),
-        (_ITALIC_RE, False, True),
-    ]
-
-    def _emit_plain(s):
-        if not s:
-            return
-        run = paragraph.add_run(s)
-        _set_run_font(run, size=base_size)
-
-    def _emit_styled(s, b, i):
-        if not s:
-            return
-        run = paragraph.add_run(s)
-        _set_run_font(run, size=base_size, bold=b, italic=i)
-
-    # 简单贪婪匹配：先找最先出现的 pattern
     while remaining:
-        earliest_match = None
-        earliest_pat = None
-        for pat, b, i in patterns:
-            m = pat.search(remaining)
-            if m:
-                if earliest_match is None or m.start() < earliest_match.start():
-                    earliest_match = m
-                    earliest_pat = (pat, b, i)
-        if earliest_match is None:
-            _emit_plain(remaining)
-            break
-        m, (pat, b_tag, i_tag) = earliest_match, earliest_pat
-        # 前面的纯文本
-        _emit_plain(remaining[:m.start()])
-        _emit_styled(m.group(1), b_tag, i_tag)
-        remaining = remaining[m.end():]
+        earliest_ph = None
+        earliest_pos = len(remaining)
+        for ph in all_ph:
+            pos = remaining.find(ph)
+            if pos != -1 and pos < earliest_pos:
+                earliest_pos = pos
+                earliest_ph = ph
 
-    # 还原 code 占位符（遍历所有 run，找到含占位符的替换）
-    for para_run in paragraph.runs:
-        txt = para_run.text
-        for ph, code_text in code_placeholders.items():
-            if ph in txt:
-                # 拆分：前文本 + 内联代码 run + 后文本
-                before, _, after = txt.partition(ph)
-                para_run.text = before
-                if code_text:
-                    code_run = paragraph.add_run(code_text)
-                    _set_run_font(code_run, name="Consolas", size=Pt(base_size.pt * 0.9),
-                                  color=RGBColor(0xE8, 0x49, 0x6A))
-                if after:
-                    after_run = paragraph.add_run(after)
-                    _set_run_font(after_run, size=base_size)
-                break
-        for ph, (link_text, link_url) in link_placeholders.items():
-            if ph in para_run.text:
-                before, _, after = para_run.text.partition(ph)
-                para_run.text = before
-                if link_text:
-                    link_run = paragraph.add_run(link_text)
-                    _set_run_font(link_run, size=base_size, bold=True,
-                                  color=RGBColor(0x25, 0x60, 0xC4))
-                if after:
-                    after_run = paragraph.add_run(after)
-                    _set_run_font(after_run, size=base_size)
-                break
+        if earliest_ph is None:
+            if remaining:
+                run = paragraph.add_run(remaining)
+                _set_run_font(run, size=base_size)
+            break
+
+        if earliest_pos > 0:
+            run = paragraph.add_run(remaining[:earliest_pos])
+            _set_run_font(run, size=base_size)
+
+        ph = earliest_ph
+        value = all_ph[ph]
+
+        if ph in code_map:
+            code_run = paragraph.add_run(value)
+            _set_run_font(code_run, name="Consolas", size=Pt(base_size.pt * 0.9),
+                          color=RGBColor(0xE8, 0x49, 0x6A))
+        elif ph in link_map:
+            link_text, link_url = value
+            link_run = paragraph.add_run(link_text)
+            _set_run_font(link_run, size=base_size, bold=True,
+                          color=RGBColor(0x25, 0x60, 0xC4))
+        elif ph in bi_map:
+            run = paragraph.add_run(value)
+            _set_run_font(run, size=base_size, bold=True, italic=True)
+        elif ph in b_map:
+            run = paragraph.add_run(value)
+            _set_run_font(run, size=base_size, bold=True)
+        elif ph in i_map:
+            run = paragraph.add_run(value)
+            _set_run_font(run, size=base_size, italic=True)
+
+        remaining = remaining[earliest_pos + len(ph):]
 
 
 def _set_cell_border(cell, **kwargs):
@@ -175,41 +183,69 @@ def _md_to_docx(content: str, title: str) -> Document:
     """
     doc = Document()
 
-    # ── 默认字体 ──
+    # ── 页面设置：A4 纸张，左侧装订边距 ──
+    section = doc.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
+    section.top_margin = Cm(2.54)
+    section.bottom_margin = Cm(2.54)
+    section.left_margin = Cm(3.17)
+    section.right_margin = Cm(2.54)
+
+    # ── Normal 样式：宋体 小四（12pt），首行缩进2字符，固定行距28磅 ──
     style = doc.styles["Normal"]
     font = style.font
     font.name = "宋体"
     font.size = Pt(12)
     style.element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+    pf = style.paragraph_format
+    pf.first_line_indent = Pt(24)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(28)
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
 
     # ── 文档标题 ──
     title_para = doc.add_paragraph()
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title_run = title_para.add_run(title)
     _set_run_font(title_run, name="黑体", size=Pt(22), bold=True)
+    title_para.paragraph_format.first_line_indent = Pt(0)
+    title_para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    title_para.paragraph_format.space_after = Pt(12)
     doc.add_paragraph()
 
     lines = content.split("\n")
     i = 0
     in_code_block = False
     code_buf = []
+    body_buf = []   # 连续正文行缓存（合并成一个段落）
 
     def _flush_pending():
-        nonlocal in_code_block, code_buf
+        nonlocal in_code_block, code_buf, body_buf
+        # 先刷新代码块
         if in_code_block:
             code_text = "\n".join(code_buf)
             p = doc.add_paragraph()
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+            p.paragraph_format.space_before = Pt(4)
+            p.paragraph_format.space_after = Pt(4)
             run = p.add_run(code_text)
-            _set_run_font(run, name="Consolas", size=Pt(10),
+            _set_run_font(run, name="Consolas", size=Pt(9),
                           color=RGBColor(0x33, 0x33, 0x33))
-            # 灰色背景效果：段落底纹
             pPr = p._p.get_or_add_pPr()
             shd = OxmlElement("w:shd")
-            shd.set(qn("w:fill"), "F5F5F5")
+            shd.set(qn("w:fill"), "F2F2F2")
             shd.set(qn("w:val"), "clear")
             pPr.append(shd)
             code_buf = []
             in_code_block = False
+        # 再刷新正文缓存（合并为一段）
+        if body_buf:
+            text = " ".join(body_buf)
+            _add_body_paragraph(text, Pt(12))
+            body_buf = []
 
     def _is_table_row(l: str) -> bool:
         return l.startswith("|") and l.rstrip().endswith("|")
@@ -220,22 +256,47 @@ def _md_to_docx(content: str, title: str) -> Document:
     def _parse_table_row(l: str) -> list[str]:
         return [c.strip() for c in l.strip("|").split("|")]
 
+    def _add_body_paragraph(text: str, size: Pt = Pt(12), bold: bool = False,
+                            font_name: str = "宋体", alignment=None,
+                            no_indent: bool = False):
+        """添加正文段落（默认首行缩进 + 固定行距）"""
+        p = doc.add_paragraph()
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        p.paragraph_format.line_spacing = Pt(28)
+        if no_indent:
+            p.paragraph_format.first_line_indent = Pt(0)
+        else:
+            p.paragraph_format.first_line_indent = Pt(24)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        if alignment is not None:
+            p.alignment = alignment
+        _append_inline_runs(p, text, size)
+        for r in p.runs:
+            r.font.bold = bold
+            r.font.name = font_name
+            r.element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
+        return p
+
     while i < len(lines):
-        line = lines[i].rstrip()  # 保留前导空格用于列表判断
+        line = lines[i].rstrip()
         stripped = line.strip()
 
         # ── 代码块 ──
         if stripped.startswith("```"):
             if in_code_block:
-                # 结束代码块
                 code_text = "\n".join(code_buf)
                 p = doc.add_paragraph()
+                p.paragraph_format.first_line_indent = Pt(0)
+                p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+                p.paragraph_format.space_before = Pt(4)
+                p.paragraph_format.space_after = Pt(4)
                 run = p.add_run(code_text)
-                _set_run_font(run, name="Consolas", size=Pt(10),
+                _set_run_font(run, name="Consolas", size=Pt(9),
                               color=RGBColor(0x33, 0x33, 0x33))
                 pPr = p._p.get_or_add_pPr()
                 shd = OxmlElement("w:shd")
-                shd.set(qn("w:fill"), "F5F5F5")
+                shd.set(qn("w:fill"), "F2F2F2")
                 shd.set(qn("w:val"), "clear")
                 pPr.append(shd)
                 code_buf = []
@@ -251,28 +312,23 @@ def _md_to_docx(content: str, title: str) -> Document:
             i += 1
             continue
 
-        # ── 空行 ──
+        # ── 空行（刷新正文缓存，输出段落分隔） ──
         if not stripped:
-            if code_buf:
-                _flush_pending()
+            _flush_pending()
             doc.add_paragraph()
             i += 1
             continue
 
-        # ── 表格（多行解析） ──
+        # ── 表格 ──
         if _is_table_row(stripped):
             _flush_pending()
-            # 收集连续表格行
             table_lines = []
             while i < len(lines) and _is_table_row(lines[i].rstrip()):
-                stripped_row = lines[i].rstrip().strip()
-                table_lines.append(stripped_row)
+                table_lines.append(lines[i].rstrip().strip())
                 i += 1
-
             if not table_lines:
                 continue
 
-            # 解析：第一行是表头，第二行是分隔符（可能没有），其余是数据
             header_row = table_lines[0]
             data_start = 1
             if len(table_lines) > 1 and _is_separator_row(table_lines[1]):
@@ -281,7 +337,6 @@ def _md_to_docx(content: str, title: str) -> Document:
             headers = _parse_table_row(header_row)
             if not headers:
                 continue
-            # 空表头占位列数
             if all(h == "" for h in headers):
                 headers = [f"列{i+1}" for i in range(len(headers))]
 
@@ -299,16 +354,20 @@ def _md_to_docx(content: str, title: str) -> Document:
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             _add_table_borders(table)
 
-            # 表头
+            # 表头：深蓝底白字
             for ci, h in enumerate(headers):
                 cell = table.cell(0, ci)
                 cell.text = ""
                 p = cell.paragraphs[0]
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.first_line_indent = Pt(0)
+                p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+                p.paragraph_format.space_before = Pt(2)
+                p.paragraph_format.space_after = Pt(2)
                 run = p.add_run(h)
-                _set_run_font(run, name="黑体", size=Pt(11), bold=True,
+                _set_run_font(run, name="黑体", size=Pt(10.5), bold=True,
                               color=RGBColor(0xFF, 0xFF, 0xFF))
-                _add_shading(cell, "E8496A")
+                _add_shading(cell, "2B5797")
 
             # 数据行
             for ri, row in enumerate(data_rows):
@@ -316,67 +375,53 @@ def _md_to_docx(content: str, title: str) -> Document:
                     cell = table.cell(ri + 1, ci)
                     cell.text = ""
                     p = cell.paragraphs[0]
+                    p.paragraph_format.first_line_indent = Pt(0)
+                    p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.space_after = Pt(1)
                     run = p.add_run(val)
-                    _set_run_font(run, size=Pt(11))
+                    _set_run_font(run, name="宋体", size=Pt(10.5))
                     if ri % 2 == 1:
-                        _add_shading(cell, "FFF5F7")
+                        _add_shading(cell, "F0F4FA")
 
-            doc.add_paragraph()  # 表格后空行
+            doc.add_paragraph()
             continue
 
         # ── H1 ──
         if stripped.startswith("# ") and not stripped.startswith("## "):
             _flush_pending()
             p = doc.add_paragraph()
-            content_text = stripped[2:]
-            _append_inline_runs(p, content_text, Pt(18))
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+            p.paragraph_format.space_before = Pt(12)
+            p.paragraph_format.space_after = Pt(6)
+            _append_inline_runs(p, stripped[2:], Pt(18))
+            for r in p.runs:
+                r.font.bold = True
+                r.font.name = "黑体"
+                r.element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
             i += 1
             continue
 
         # ── H2 ──
         if stripped.startswith("## "):
             _flush_pending()
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(16)
-            p.paragraph_format.space_after = Pt(6)
-            content_text = stripped[3:]
-            _append_inline_runs(p, content_text, Pt(16))
-            # 给整个 H2 加粗
-            for r in p.runs:
-                r.font.bold = True
-                r.font.name = "黑体"
-                r.element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+            _add_body_paragraph(stripped[3:], size=Pt(16), bold=True, font_name="黑体", no_indent=True)
             i += 1
             continue
 
         # ── H3 ──
         if stripped.startswith("### "):
             _flush_pending()
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(12)
-            p.paragraph_format.space_after = Pt(4)
-            content_text = stripped[4:]
-            _append_inline_runs(p, content_text, Pt(14))
-            for r in p.runs:
-                r.font.bold = True
-                r.font.name = "黑体"
-                r.element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+            _add_body_paragraph(stripped[4:], size=Pt(14), bold=True, font_name="黑体", no_indent=True)
             i += 1
             continue
 
         # ── H4 ──
         if stripped.startswith("#### "):
             _flush_pending()
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(10)
-            p.paragraph_format.space_after = Pt(2)
-            content_text = stripped[5:]
-            _append_inline_runs(p, content_text, Pt(13))
-            for r in p.runs:
-                r.font.bold = True
-                r.font.name = "黑体"
-                r.element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+            _add_body_paragraph(stripped[5:], size=Pt(13), bold=True, font_name="黑体", no_indent=True)
             i += 1
             continue
 
@@ -387,13 +432,16 @@ def _md_to_docx(content: str, title: str) -> Document:
             while i < len(lines) and lines[i].rstrip().strip().startswith("> "):
                 quote_lines.append(lines[i].rstrip().strip()[2:])
                 i += 1
-            p = doc.add_paragraph()
-            p.paragraph_format.left_indent = Cm(1.5)
-            # 加左边框效果用缩进模拟
             full_quote = " ".join(quote_lines)
+            p = doc.add_paragraph()
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.left_indent = Cm(1.5)
+            p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+            p.paragraph_format.space_before = Pt(4)
+            p.paragraph_format.space_after = Pt(4)
             run = p.add_run(full_quote)
             _set_run_font(run, name="楷体", size=Pt(11), italic=True,
-                          color=RGBColor(0x7A, 0x6E, 0x6E))
+                          color=RGBColor(0x66, 0x66, 0x66))
             doc.add_paragraph()
             continue
 
@@ -401,6 +449,7 @@ def _md_to_docx(content: str, title: str) -> Document:
         if re.match(r"^[-*_]{3,}$", stripped):
             _flush_pending()
             p = doc.add_paragraph()
+            p.paragraph_format.first_line_indent = Pt(0)
             pPr = p._p.get_or_add_pPr()
             pBdr = OxmlElement("w:pBdr")
             bottom = OxmlElement("w:bottom")
@@ -433,14 +482,19 @@ def _md_to_docx(content: str, title: str) -> Document:
             for idx, (kind, item_text) in enumerate(list_items):
                 p = doc.add_paragraph()
                 p.paragraph_format.left_indent = Cm(1.5)
+                p.paragraph_format.first_line_indent = Pt(0)
+                p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+                p.paragraph_format.line_spacing = Pt(26)
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
                 if numbered and kind == "num":
                     p.style = doc.styles["List Number"]
-                    _append_inline_runs(p, item_text, Pt(11))
+                    _append_inline_runs(p, item_text, Pt(12))
                 else:
                     prefix = f"{idx + 1}. " if kind == "num" else "• "
                     prefix_run = p.add_run(prefix)
-                    _set_run_font(prefix_run, size=Pt(11))
-                    _append_inline_runs(p, item_text, Pt(11))
+                    _set_run_font(prefix_run, size=Pt(12))
+                    _append_inline_runs(p, item_text, Pt(12))
             doc.add_paragraph()
             continue
 
@@ -456,7 +510,6 @@ def _md_to_docx(content: str, title: str) -> Document:
                     list_items.append(sl[2:])
                     i += 1
                 elif sl.startswith("  "):
-                    # 续行
                     if list_items:
                         list_items[-1] += " " + sl.strip()
                     i += 1
@@ -466,19 +519,18 @@ def _md_to_docx(content: str, title: str) -> Document:
             for item_text in list_items:
                 p = doc.add_paragraph()
                 p.style = doc.styles["List Bullet"]
-                _append_inline_runs(p, item_text, Pt(11))
+                p.paragraph_format.first_line_indent = Pt(0)
+                p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+                p.paragraph_format.line_spacing = Pt(26)
+                _append_inline_runs(p, item_text, Pt(12))
             doc.add_paragraph()
             continue
 
-        # ── 普通段落（内联 Markdown） ──
-        _flush_pending()
-        p = doc.add_paragraph()
-        _append_inline_runs(p, stripped, Pt(12))
+        # ── 普通段落（连续行合并为一段） ──
+        body_buf.append(stripped)
         i += 1
 
-    # 可能的尾随代码块
     _flush_pending()
-
     return doc
 
 
