@@ -870,7 +870,7 @@ async def chat(request: Request):
         return tool_name
 
     def summarize_tool_args(args: dict) -> str:
-        for key in ("query", "law_name", "article", "keyword", "keywords"):
+        for key in ("search_query", "query", "law_name", "article", "keyword", "keywords"):
             value = args.get(key)
             if value:
                 text = str(value).strip()
@@ -1126,6 +1126,13 @@ JSON 格式：
         msgs.append({"role": "user", "content": msg_text})
         return msgs
 
+    def find_web_search_tool_name() -> str:
+        for tool in mcp_tools or []:
+            name = tool.get("function", {}).get("name", "")
+            if name.startswith("yuandian_zhipu_") or name == "webSearchPrime" or "web_search" in name.lower():
+                return name
+        return ""
+
     async def generate():
         try:
             client = get_ai_client()
@@ -1192,6 +1199,89 @@ JSON 格式：
                 })
                 if research_context:
                     model_user_message = f"{user_message}\n\n{research_context}"
+
+            if web_search_enabled and is_mcp_available():
+                web_tool_name = find_web_search_tool_name()
+                original_web_query = (message or display_message or user_message).strip()
+                if web_tool_name and original_web_query:
+                    web_query = original_web_query
+                    try:
+                        rewrite_response = await client.chat.completions.create(
+                            model=DEEPSEEK_MODEL,
+                            max_tokens=120,
+                            temperature=0.2,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "你是联网搜索查询改写器。请把用户问题改写成适合搜索引擎和新闻/资料检索的中文查询词。"
+                                        "保留关键主体、时间、地域、法律概念和争议焦点；去掉寒暄和无关指令。"
+                                        "只输出一行查询词，不要解释，不要加引号。"
+                                    ),
+                                },
+                                {"role": "user", "content": original_web_query[:1200]},
+                            ],
+                        )
+                        await record_response_usage(
+                            user=user,
+                            feature="web_search_rewrite",
+                            model=DEEPSEEK_MODEL,
+                            response=rewrite_response,
+                        )
+                        rewritten = (rewrite_response.choices[0].message.content or "").strip()
+                        rewritten = rewritten.strip("`\"'“”‘’ \n")
+                        if rewritten:
+                            web_query = rewritten[:500]
+                    except Exception as rewrite_error:
+                        print(f"[WebSearch] 查询改写失败，使用原始问题: {rewrite_error}")
+
+                    readable_tool_name = format_tool_name(web_tool_name)
+                    short_query = web_query[:80] + ("..." if len(web_query) > 80 else "")
+                    yield sse_payload({
+                        "status": f"正在调用{readable_tool_name}: {short_query}",
+                        "tool": {
+                            "stage": "start",
+                            "name": readable_tool_name,
+                            "query": short_query,
+                        },
+                    })
+                    web_args = {
+                        "search_query": web_query,
+                        "count": 5,
+                    }
+                    web_result = await execute_mcp_tool(web_tool_name, web_args)
+                    yield sse_payload({
+                        "status": f"{readable_tool_name}完成，正在结合最新材料...",
+                        "tool": {
+                            "stage": "done",
+                            "name": readable_tool_name,
+                        },
+                    })
+                    yield sse_payload({
+                        "references": [{
+                            "id": f"web-forced-{uuid.uuid4().hex}",
+                            "type": "web",
+                            "title": f"联网搜索: {short_query}",
+                            "query": short_query,
+                            "reason": "用户已开启联网搜索，系统先改写问题并获取最新网络材料。",
+                            "content": str(web_result or "")[:20000],
+                        }]
+                    })
+                    web_context = (
+                        "\n\n--- 联网搜索材料（用户已开启联网搜索，回答时请优先结合这些最新材料，并说明检索材料的限制）---\n"
+                        f"原始问题：{original_web_query}\n"
+                        f"改写检索词：{web_query}\n"
+                        f"{str(web_result or '')[:20000]}"
+                    )
+                    model_user_message = f"{model_user_message}{web_context}"
+                else:
+                    yield sse_payload({
+                        "status": "联网搜索已开启，但当前环境未加载到 webSearchPrime 工具，将继续基于其他材料回答。",
+                        "tool": {
+                            "stage": "failed",
+                            "name": "联网搜索",
+                        },
+                    })
 
             messages = build_msgs(model_user_message, history, system_prompt)
             new_messages_start = len(messages) - 1

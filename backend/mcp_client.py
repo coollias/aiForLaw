@@ -109,13 +109,24 @@ async def _connect_and_list_tools(server_key: str) -> list[dict]:
             already_scoped = tool.name.startswith(f"yuandian_{server_key}_") or tool.name.startswith("yuandian_rh_")
             unique_name = tool.name if already_scoped else f"yuandian_{server_key}_{tool.name}"
 
-            # 注册工具映射
-            _mcp_tool_registry[unique_name] = {
-                "server_key": server_key,
-                "original_name": tool.name,
-                "description": tool.description or tool.name,
-                "input_schema": tool.inputSchema or {},
-            }
+            # 智谱搜索工具：注册友好的短名，便于模型识别
+            if server_key == "zhipu_search":
+                friendly_name = "zhipu_web_search"
+                _mcp_tool_registry[friendly_name] = {
+                    "server_key": server_key,
+                    "original_name": tool.name,
+                    "description": tool.description or tool.name,
+                    "input_schema": tool.inputSchema or {},
+                }
+                _mcp_tool_registry[unique_name] = _mcp_tool_registry[friendly_name]
+            else:
+                # 注册工具映射
+                _mcp_tool_registry[unique_name] = {
+                    "server_key": server_key,
+                    "original_name": tool.name,
+                    "description": tool.description or tool.name,
+                    "input_schema": tool.inputSchema or {},
+                }
 
             # 转为 OpenAI function calling 格式
             # 智谱搜索工具：使用更清晰的中文描述
