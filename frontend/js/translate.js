@@ -30,7 +30,6 @@ const TranslateApp = {
     bindUpload() {
         const zone = document.getElementById('upload-zone');
         const input = document.getElementById('file-input');
-        zone.addEventListener('click', () => input.click());
         input.addEventListener('change', () => { const f = input.files?.[0]; if (f) this.handleFile(f); });
         zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
         zone.addEventListener('dragleave', () => { zone.classList.remove('dragover'); });

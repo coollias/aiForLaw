@@ -72,10 +72,10 @@ const Chat = {
             }
         });
 
-        // 附件按钮
-        this.el.attachBtn.addEventListener('click', () => this.el.fileInput.click());
+        // 附件按钮本身是 label，交给浏览器默认行为打开文件框，避免双触发。
+        this.el.fileInput.multiple = true;
         this.el.fileInput.addEventListener('change', () => {
-            for (const file of this.el.fileInput.files) {
+            for (const file of Array.from(this.el.fileInput.files || [])) {
                 this.addFile(file);
             }
             this.el.fileInput.value = '';
