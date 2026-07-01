@@ -83,15 +83,43 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE_CONTRACT_REVIEWS_TABLE = """
 CREATE TABLE IF NOT EXISTS contract_reviews (
     id VARCHAR(64) PRIMARY KEY,
+    document_id VARCHAR(64),
     user_id BIGINT NOT NULL,
     session_id VARCHAR(64),
     filename VARCHAR(255) NOT NULL,
     file_mime VARCHAR(128),
     file_path VARCHAR(512),
     note TEXT,
+    contract_type VARCHAR(32),
+    review_perspective VARCHAR(32),
+    represented_party_json TEXT,
+    include_references TINYINT(1) NOT NULL DEFAULT 0,
+    issue_limit INT NOT NULL DEFAULT 12,
     parsed_source VARCHAR(32),
     parsed_doc_json LONGTEXT,
     review_json LONGTEXT NOT NULL,
+    created_at DOUBLE NOT NULL,
+    updated_at DOUBLE NOT NULL,
+    INDEX idx_user_updated (user_id, updated_at),
+    INDEX idx_document_id (document_id),
+    INDEX idx_session_id (session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+CREATE_CONTRACT_DOCUMENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS contract_documents (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    session_id VARCHAR(64),
+    filename VARCHAR(255) NOT NULL,
+    file_mime VARCHAR(128),
+    file_path VARCHAR(512),
+    parsed_source VARCHAR(32),
+    parsed_doc_json LONGTEXT,
+    markdown_text LONGTEXT,
+    parties_json LONGTEXT,
+    parse_status VARCHAR(32) NOT NULL DEFAULT 'parsed',
+    parse_error TEXT,
     created_at DOUBLE NOT NULL,
     updated_at DOUBLE NOT NULL,
     INDEX idx_user_updated (user_id, updated_at),
@@ -193,6 +221,7 @@ async def init_db(
             await cur.execute(CREATE_MESSAGES_TABLE)
             await cur.execute(CREATE_PASSWORD_TABLE)
             await cur.execute(CREATE_AUTH_SESSIONS_TABLE)
+            await cur.execute(CREATE_CONTRACT_DOCUMENTS_TABLE)
             await cur.execute(CREATE_CONTRACT_REVIEWS_TABLE)
             await cur.execute(CREATE_RESEARCH_RECORDS_TABLE)
             await cur.execute(CREATE_RESEARCH_MESSAGES_TABLE)
@@ -208,6 +237,23 @@ async def init_db(
                 pass  # 列已存在
             try:
                 await cur.execute("ALTER TABLE sessions ADD INDEX idx_user_last_active (user_id, last_active)")
+            except Exception:
+                pass  # 索引已存在
+            contract_review_columns = [
+                ("document_id", "ALTER TABLE contract_reviews ADD COLUMN document_id VARCHAR(64)"),
+                ("contract_type", "ALTER TABLE contract_reviews ADD COLUMN contract_type VARCHAR(32)"),
+                ("review_perspective", "ALTER TABLE contract_reviews ADD COLUMN review_perspective VARCHAR(32)"),
+                ("represented_party_json", "ALTER TABLE contract_reviews ADD COLUMN represented_party_json TEXT"),
+                ("include_references", "ALTER TABLE contract_reviews ADD COLUMN include_references TINYINT(1) NOT NULL DEFAULT 0"),
+                ("issue_limit", "ALTER TABLE contract_reviews ADD COLUMN issue_limit INT NOT NULL DEFAULT 12"),
+            ]
+            for _, sql in contract_review_columns:
+                try:
+                    await cur.execute(sql)
+                except Exception:
+                    pass  # 列已存在
+            try:
+                await cur.execute("ALTER TABLE contract_reviews ADD INDEX idx_document_id (document_id)")
             except Exception:
                 pass  # 索引已存在
 
@@ -873,24 +919,126 @@ async def delete_research_record(record_id: str, user_id: int) -> bool:
 
 # ===== 合同审查记录 =====
 
+def _public_contract_document(row: dict) -> dict:
+    parties = {}
+    try:
+        parties = json.loads(row.get("parties_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parties = {}
+    return {
+        "id": row["id"],
+        "filename": row.get("filename") or "",
+        "file_mime": row.get("file_mime") or "",
+        "parsed_source": row.get("parsed_source") or "",
+        "parse_status": row.get("parse_status") or "parsed",
+        "parse_error": row.get("parse_error") or "",
+        "parties": parties.get("parties", []) if isinstance(parties, dict) else [],
+        "parties_meta": parties if isinstance(parties, dict) else {},
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
 def _public_contract_review(row: dict) -> dict:
     review = {}
     try:
         review = json.loads(row.get("review_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         pass
+    represented_party = {}
+    try:
+        represented_party = json.loads(row.get("represented_party_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        pass
     issues = review.get("issues") if isinstance(review, dict) else []
     return {
         "id": row["id"],
-        "filename": row["filename"],
+        "document_id": row.get("document_id") or "",
+        "filename": row.get("filename") or "",
         "file_mime": row.get("file_mime") or "",
         "note": row.get("note") or "",
+        "contract_type": row.get("contract_type") or "",
+        "review_perspective": row.get("review_perspective") or "neutral",
+        "represented_party": represented_party if isinstance(represented_party, dict) else {},
+        "include_references": bool(row.get("include_references") or 0),
+        "issue_limit": int(row.get("issue_limit") or 12),
         "parsed_source": row.get("parsed_source") or "",
         "overall_risk": review.get("overall_risk", "medium") if isinstance(review, dict) else "medium",
         "issue_count": len(issues) if isinstance(issues, list) else 0,
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
     }
+
+
+async def save_contract_document(
+    *,
+    user_id: int,
+    session_id: str | None,
+    filename: str,
+    file_mime: str,
+    file_path: str,
+    parsed_doc: dict | None,
+    parties: dict | None,
+    parse_status: str = "parsed",
+    parse_error: str = "",
+) -> dict:
+    document_id = hashlib.sha256(os.urandom(32)).hexdigest()
+    now = time.time()
+    parsed_doc = parsed_doc or {}
+    parties = parties or {"parties": []}
+    parsed_json = json.dumps(parsed_doc, ensure_ascii=False) if parsed_doc else None
+    parties_json = json.dumps(parties, ensure_ascii=False)
+    markdown = str(parsed_doc.get("markdown") or "")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO contract_documents "
+                "(id, user_id, session_id, filename, file_mime, file_path, parsed_source, parsed_doc_json, markdown_text, parties_json, parse_status, parse_error, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    document_id,
+                    user_id,
+                    session_id,
+                    filename,
+                    file_mime,
+                    file_path,
+                    parsed_doc.get("source", ""),
+                    parsed_json,
+                    markdown,
+                    parties_json,
+                    parse_status,
+                    parse_error,
+                    now,
+                    now,
+                ),
+            )
+    return await get_contract_document(document_id, user_id)
+
+
+async def get_contract_document(document_id: str, user_id: int) -> Optional[dict]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT * FROM contract_documents WHERE id = %s AND user_id = %s",
+                (document_id, user_id),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        parsed_doc = json.loads(row.get("parsed_doc_json") or "null")
+    except (TypeError, json.JSONDecodeError):
+        parsed_doc = None
+    if isinstance(parsed_doc, dict) and not parsed_doc.get("markdown") and row.get("markdown_text"):
+        parsed_doc["markdown"] = row.get("markdown_text")
+    public = _public_contract_document(row)
+    public.update({
+        "file_path": row.get("file_path") or "",
+        "parsed_doc": parsed_doc,
+    })
+    return public
 
 
 async def save_contract_review(
@@ -901,28 +1049,41 @@ async def save_contract_review(
     file_mime: str,
     file_path: str,
     note: str,
+    document_id: str | None = None,
+    contract_type: str = "",
+    review_perspective: str = "neutral",
+    represented_party: dict | None = None,
+    include_references: bool = False,
+    issue_limit: int = 12,
     parsed_doc: dict | None,
     review: dict,
 ) -> dict:
     review_id = hashlib.sha256(os.urandom(32)).hexdigest()
     now = time.time()
     parsed_json = json.dumps(parsed_doc, ensure_ascii=False) if parsed_doc else None
+    represented_party_json = json.dumps(represented_party or {}, ensure_ascii=False)
     review_json = json.dumps(review, ensure_ascii=False)
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "INSERT INTO contract_reviews "
-                "(id, user_id, session_id, filename, file_mime, file_path, note, parsed_source, parsed_doc_json, review_json, created_at, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "(id, document_id, user_id, session_id, filename, file_mime, file_path, note, contract_type, review_perspective, represented_party_json, include_references, issue_limit, parsed_source, parsed_doc_json, review_json, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     review_id,
+                    document_id,
                     user_id,
                     session_id,
                     filename,
                     file_mime,
                     file_path,
                     note,
+                    contract_type,
+                    review_perspective,
+                    represented_party_json,
+                    1 if include_references else 0,
+                    issue_limit,
                     (parsed_doc or {}).get("source", ""),
                     parsed_json,
                     review_json,
@@ -938,7 +1099,7 @@ async def list_contract_reviews(user_id: int, limit: int = 50) -> list[dict]:
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute(
-                "SELECT id, filename, file_mime, note, parsed_source, review_json, created_at, updated_at "
+                "SELECT id, document_id, filename, file_mime, note, contract_type, review_perspective, represented_party_json, include_references, issue_limit, parsed_source, review_json, created_at, updated_at "
                 "FROM contract_reviews WHERE user_id = %s ORDER BY updated_at DESC LIMIT %s",
                 (user_id, limit),
             )
@@ -985,7 +1146,7 @@ async def delete_contract_review(review_id: str, user_id: int) -> Optional[str]:
                 "DELETE FROM contract_reviews WHERE id = %s AND user_id = %s",
                 (review_id, user_id),
             )
-    return record.get("file_path") or ""
+    return "" if record.get("document_id") else (record.get("file_path") or "")
 
 
 # ===== 翻译记录 =====

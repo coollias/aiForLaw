@@ -2699,6 +2699,71 @@ body.theme-cold .research-reference-tabs button {
     font-size: 12px;
 }
 
+.contract-party-panel {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: white;
+}
+
+.party-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.party-panel-head strong {
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.party-panel-head span {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: right;
+}
+
+.contract-party-list {
+    display: grid;
+    gap: 7px;
+}
+
+.party-option {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: start;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--cream-50);
+    cursor: pointer;
+}
+
+.party-option input {
+    margin-top: 3px;
+    accent-color: var(--pink-600);
+}
+
+.party-option strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.party-option span,
+.party-option small {
+    display: block;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
 .contract-note {
     min-height: 76px;
     resize: vertical;

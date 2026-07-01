@@ -364,17 +364,28 @@ const API = {
         await downloadFile('/api/document/export', { content, title }, `${title}.docx`);
     },
 
-    async reviewContract(file, note, contractType, includeReferences, issueLimit, onProgress) {
-        const started = await this.startContractReview(file, note, contractType, includeReferences, issueLimit);
+    async parseContract(file, contractType) {
+        const res = await this.post('/api/contract/parse', {
+            file,
+            contract_type: contractType || 'general',
+        });
+        return res.json();
+    },
+
+    async reviewContract(file, note, contractType, includeReferences, issueLimit, onProgress, options = {}) {
+        const started = await this.startContractReview(file, note, contractType, includeReferences, issueLimit, options);
         if (onProgress) onProgress(started.job);
         return this.waitContractReviewJob(started.job.job_id, onProgress);
     },
 
-    async startContractReview(file, note, contractType, includeReferences, issueLimit) {
+    async startContractReview(file, note, contractType, includeReferences, issueLimit, options = {}) {
         const res = await this.post('/api/contract/review/start', {
-            file,
+            file: options.documentId ? null : file,
+            document_id: options.documentId || '',
             note: note || '',
             contract_type: contractType || 'general',
+            review_perspective: options.reviewPerspective || 'neutral',
+            represented_party: options.representedParty || {},
             include_references: !!includeReferences,
             issue_limit: Number(issueLimit ?? 12),
         });

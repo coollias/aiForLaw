@@ -3250,6 +3250,169 @@ def _parse_issue_limit(value, default: int = 12) -> int:
     return max(1, min(limit, 100))
 
 
+def _normalize_contract_parties(data: dict) -> dict:
+    items = data.get("parties") if isinstance(data, dict) else []
+    if not isinstance(items, list):
+        items = []
+    parties = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        role = re.sub(r"\s+", " ", str(item.get("role") or "")).strip()[:40]
+        name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:160]
+        if not role and not name:
+            continue
+        aliases = item.get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        if not isinstance(aliases, list):
+            aliases = []
+        clean_aliases = []
+        for alias in aliases:
+            alias = re.sub(r"\s+", " ", str(alias or "")).strip()[:40]
+            if alias and alias not in clean_aliases and alias != role:
+                clean_aliases.append(alias)
+        quote = re.sub(r"\s+", " ", str(item.get("source_quote") or "")).strip()[:260]
+        try:
+            confidence = float(item.get("confidence", 0.7))
+        except Exception:
+            confidence = 0.7
+        confidence = max(0, min(1, confidence))
+        key = (role, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        parties.append({
+            "role": role or "合同主体",
+            "name": name,
+            "aliases": clean_aliases[:6],
+            "source_quote": quote,
+            "confidence": round(confidence, 2),
+        })
+        if len(parties) >= 12:
+            break
+    return {"parties": parties}
+
+
+def _extract_contract_parties_by_rule(markdown: str) -> dict:
+    text = re.sub(r"[ \t]+", " ", markdown or "")
+    role_pattern = r"(甲方|乙方|丙方|丁方|委托方|受托方|出租方|承租方|买方|卖方|采购方|供应商|服务方|服务提供方|发包方|承包方|转让方|受让方|出借人|借款人|保证人|保密方|接收方)"
+    patterns = [
+        re.compile(role_pattern + r"(?:（([^）]{1,20})）|\(([^)]{1,20})\))?\s*[:：]\s*([^\n\r；;，,]{2,120})"),
+        re.compile(role_pattern + r"\s*[（(]([^）)]{1,20})[）)]\s*[:：]?\s*([^\n\r；;，,]{2,120})"),
+    ]
+    parties = []
+    seen = set()
+    for pattern in patterns:
+        for match in pattern.finditer(text[:30000]):
+            role = match.group(1).strip()
+            groups = [g for g in match.groups()[1:] if g]
+            if not groups:
+                continue
+            name = groups[-1].strip()
+            aliases = [g.strip() for g in groups[:-1] if g and g.strip() != role]
+            name = re.sub(r"^(为|系|是)", "", name).strip()
+            if len(name) < 2 or " " in name[:4]:
+                continue
+            key = (role, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            parties.append({
+                "role": role,
+                "name": name[:160],
+                "aliases": aliases[:4],
+                "source_quote": match.group(0).strip()[:260],
+                "confidence": 0.78,
+            })
+            if len(parties) >= 8:
+                break
+        if len(parties) >= 8:
+            break
+    return {"parties": parties}
+
+
+async def _extract_contract_parties(markdown: str, *, filename: str = "", user: dict | None = None) -> dict:
+    rule_result = _extract_contract_parties_by_rule(markdown)
+    seed = (markdown or "")[:30000]
+    if not seed.strip():
+        return rule_result
+    try:
+        from ai_client import CONTRACT_PARTY_EXTRACT_MODEL, get_ai_client
+        client = get_ai_client()
+        prompt = f"""你是合同主体信息抽取助手。请从合同解析文本中识别合同各方主体，只输出 JSON，不要输出 Markdown。
+
+合同文件名：{filename or "合同文件"}
+
+合同解析文本：
+{seed}
+
+输出格式：
+{{
+  "parties": [
+    {{
+      "role": "甲方",
+      "name": "主体名称",
+      "aliases": ["委托方"],
+      "source_quote": "合同原文中能证明该主体身份的连续片段",
+      "confidence": 0.92
+    }}
+  ]
+}}
+
+要求：
+1. 只能依据合同原文，不得推测、补全或编造主体。
+2. role 使用合同中的称谓，例如甲方、乙方、委托方、受托方、出租方、承租方。
+3. 如果同一主体有多个称谓，放入 aliases。
+4. 每个主体必须有 source_quote；无法确定时返回空数组。"""
+        response = await client.chat.completions.create(
+            model=CONTRACT_PARTY_EXTRACT_MODEL,
+            max_tokens=1600,
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": "你只输出可解析 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        if user:
+            await record_response_usage(user=user, feature="contract_party_extract", model=CONTRACT_PARTY_EXTRACT_MODEL, response=response)
+        model_result = _normalize_contract_parties(_extract_contract_json(response.choices[0].message.content or "{}"))
+    except Exception:
+        model_result = {"parties": []}
+
+    if model_result.get("parties"):
+        model_result["fallback_parties"] = rule_result.get("parties", [])
+        return model_result
+    return rule_result
+
+
+def _build_contract_description_from_parsed_doc(parsed_doc: dict, fname: str, max_chars: int = 180000) -> str:
+    markdown = str((parsed_doc or {}).get("markdown") or "")
+    doc_type = str((parsed_doc or {}).get("document_type") or "document")
+    doc_label = {"pdf": "PDF", "word": "Word", "text": "文本"}.get(doc_type, "文档")
+    if markdown.strip():
+        return f"[解析版{doc_label}: {fname}]\n```\n{markdown[:max_chars]}\n```"
+    return ""
+
+
+def _build_contract_perspective_instruction(review_perspective: str, represented_party: dict | None) -> str:
+    perspective = (review_perspective or "neutral").strip()
+    party = represented_party or {}
+    role = str(party.get("role") or "").strip()
+    name = str(party.get("name") or "").strip()
+    label = " / ".join(part for part in [role, name] if part)
+    if perspective == "neutral":
+        return "中立审查。请平衡识别双方主要权利义务和合同整体风险。"
+    if not label:
+        label = "用户指定的我方"
+    return (
+        f"代表{label}审查。请从我方利益出发，优先识别我方义务过重、责任过宽、救济不足、"
+        "对方权利过强、付款/验收/解除/违约责任不平衡、管辖和证据负担不利等问题；"
+        "修改建议应偏向保护我方利益。"
+    )
+
+
 async def _build_contract_reference_queries(
     *,
     fname: str,
@@ -3443,7 +3606,14 @@ def _build_contract_review_input(file_info: dict, max_chars: int = 45000) -> tup
         return fallback, parsed_doc
 
     description = build_file_description(file_info, max_chars=max_chars)
-    return description, None
+    parsed_doc = {
+        "source": "text",
+        "document_type": "text",
+        "markdown": description[:120000],
+        "asset_count": 0,
+        "has_layout_json": False,
+    }
+    return description, parsed_doc
 
 
 def _save_contract_upload_file(user_id: int, file_info: dict) -> str:
@@ -3480,6 +3650,7 @@ def _build_contract_review_prompt(
     contract_type_name: str,
     contract_type_focus: str,
     note: str,
+    perspective_instruction: str,
     include_references: bool,
     reference_context: str,
     contract_text: str,
@@ -3492,6 +3663,7 @@ def _build_contract_review_prompt(
 合同文件名：{fname}
 合同类型：{contract_type_name}
 类型审查重点：{contract_type_focus}
+审查立场：{perspective_instruction}
 用户关注点：{note or "未特别说明，请做全面风险审查"}{scope}
 法规/案例依据开关：{"已开启，请结合下方依据并在 basis 字段中写明可支撑该风险判断的法条、裁判规则或检索依据。" if include_references else "未开启，不需要主动扩展法规/案例检索依据。"}
 
@@ -3525,7 +3697,8 @@ def _build_contract_review_prompt(
 2. page 必须尽量根据页码标注填写；无法判断时填 1。
 3. quote 必须来自合同原文，不要编造；请截取 15-120 字的连续原文片段，不要改写、拼接或概括。
 4. severity 只能是 high、medium、low。
-5. 必须输出完整、合法 JSON；如果风险点很多，优先保证 JSON 可解析，不要输出半截内容。
+5. 如果本次代表某一方审查，analysis 和 suggestion 必须说明该问题对我方的具体不利影响和可谈判修改方向；明显有利于我方的条款不要机械列为风险。
+6. 必须输出完整、合法 JSON；如果风险点很多，优先保证 JSON 可解析，不要输出半截内容。
 """
 
 
@@ -3624,14 +3797,17 @@ async def _execute_contract_review(
     *,
     user_id: int,
     session_id: str,
-    file_info: dict,
     note: str,
     contract_type: str,
+    file_info: dict | None = None,
+    document: dict | None = None,
+    review_perspective: str = "neutral",
+    represented_party: dict | None = None,
     include_references: bool = False,
     issue_limit: int = 12,
     status_callback=None,
 ) -> dict:
-    """解析合同并生成审查结果；同步接口和后台任务共用。"""
+    """生成审查结果；新流程复用已解析文档，旧流程仍可直接解析上传文件。"""
     from db import save_contract_review
     from ai_client import CONTRACT_REVIEW_MODEL, get_ai_client
 
@@ -3639,8 +3815,10 @@ async def _execute_contract_review(
         if status_callback:
             await status_callback(stage, message, progress)
 
-    fname = file_info.get("name", "合同文件")
-    file_mime = file_info.get("mime_type", "")
+    file_info = file_info or {}
+    document = document or None
+    fname = (document or {}).get("filename") or file_info.get("name", "合同文件")
+    file_mime = (document or {}).get("file_mime") or file_info.get("mime_type", "")
     contract_type_name, contract_type_focus = _get_contract_review_type(contract_type)
     issue_limit = _parse_issue_limit(issue_limit)
     issue_limit_instruction = (
@@ -3648,14 +3826,27 @@ async def _execute_contract_review(
         if issue_limit == 0 else f"最多列出 {issue_limit} 个最重要风险点。"
     )
 
-    await update("parsing", "正在解析合同内容，较大的 PDF/DOCX 可能需要一些时间...", 20)
     max_input_chars = int(os.getenv("CONTRACT_REVIEW_MAX_INPUT_CHARS", "180000"))
-    description, parsed_doc = await asyncio.to_thread(_build_contract_review_input, file_info, max_input_chars)
+    if document:
+        await update("parsing", "正在读取已解析的合同内容...", 20)
+        parsed_doc = document.get("parsed_doc") or {}
+        description = _build_contract_description_from_parsed_doc(parsed_doc, fname, max_input_chars)
+        file_path = document.get("file_path") or ""
+        document_id = document.get("id") or None
+    else:
+        await update("parsing", "正在解析合同内容，较大的 PDF/DOCX 可能需要一些时间...", 20)
+        description, parsed_doc = await asyncio.to_thread(_build_contract_review_input, file_info, max_input_chars)
+        file_path = ""
+        document_id = None
     if parsed_doc is not None:
         parsed_doc["contract_type"] = contract_type if contract_type in CONTRACT_REVIEW_TYPES else "general"
         parsed_doc["contract_type_name"] = contract_type_name
+        parsed_doc["review_perspective"] = review_perspective or "neutral"
+        parsed_doc["represented_party"] = represented_party or {}
     if "读取失败" in description or "暂不支持" in description:
         raise ValueError(description[:500])
+    if not description.strip():
+        raise ValueError("当前合同没有可用于审查的解析文本")
 
     reference_context = ""
     references = []
@@ -3679,11 +3870,13 @@ async def _execute_contract_review(
         if len(chunks) > 1:
             await update("reviewing", f"合同已解析，正在审查第 {index}/{len(chunks)} 段...", 65 + min(20, int(index / len(chunks) * 20)))
         part_label = f"第 {index}/{len(chunks)} 段。只审查本段文本，风险点 quote 必须来自本段。" if len(chunks) > 1 else ""
+        perspective_instruction = _build_contract_perspective_instruction(review_perspective, represented_party)
         prompt = _build_contract_review_prompt(
             fname=fname,
             contract_type_name=contract_type_name,
             contract_type_focus=contract_type_focus,
             note=note,
+            perspective_instruction=perspective_instruction,
             include_references=include_references,
             reference_context=reference_context,
             contract_text=chunk,
@@ -3712,16 +3905,25 @@ async def _execute_contract_review(
     review = _combine_contract_review_chunks(chunk_reviews, issue_limit=issue_limit)
     if references:
         review["references"] = references
+    review["review_perspective"] = review_perspective or "neutral"
+    review["represented_party"] = represented_party or {}
 
     await update("saving", "审查完成，正在保存记录...", 90)
-    file_path = await asyncio.to_thread(_save_contract_upload_file, user_id, file_info)
+    if not file_path and file_info.get("data"):
+        file_path = await asyncio.to_thread(_save_contract_upload_file, user_id, file_info)
     record = await save_contract_review(
         user_id=user_id,
         session_id=session_id,
+        document_id=document_id,
         filename=fname,
         file_mime=file_mime,
         file_path=file_path,
         note=note,
+        contract_type=contract_type,
+        review_perspective=review_perspective or "neutral",
+        represented_party=represented_party or {},
+        include_references=include_references,
+        issue_limit=issue_limit,
         parsed_doc=parsed_doc,
         review=review,
     )
@@ -3769,7 +3971,19 @@ async def _advance_contract_review_job(job_id: str):
             _set_contract_review_job(job_id, progress=min(cap, current + step))
 
 
-async def _run_contract_review_job(job_id: str, *, user_id: int, session_id: str, file_info: dict, note: str, contract_type: str, issue_limit: int):
+async def _run_contract_review_job(
+    job_id: str,
+    *,
+    user_id: int,
+    session_id: str,
+    file_info: dict | None,
+    document: dict | None,
+    note: str,
+    contract_type: str,
+    review_perspective: str,
+    represented_party: dict | None,
+    issue_limit: int,
+):
     heartbeat = asyncio.create_task(_advance_contract_review_job(job_id))
     try:
         async def callback(stage: str, message: str, progress: int):
@@ -3779,9 +3993,12 @@ async def _run_contract_review_job(job_id: str, *, user_id: int, session_id: str
         result = await _execute_contract_review(
             user_id=user_id,
             session_id=session_id,
-            file_info=file_info,
             note=note,
             contract_type=contract_type,
+            file_info=file_info,
+            document=document,
+            review_perspective=review_perspective,
+            represented_party=represented_party,
             include_references=bool(CONTRACT_REVIEW_JOBS.get(job_id, {}).get("include_references")),
             issue_limit=issue_limit,
             status_callback=callback,
@@ -3793,10 +4010,10 @@ async def _run_contract_review_job(job_id: str, *, user_id: int, session_id: str
         heartbeat.cancel()
 
 
-@app.post("/api/contract/review")
-async def contract_review(request: Request):
-    """合同审查工作台：同步解析上传文件并返回结构化风险点。"""
-    from db import get_session
+@app.post("/api/contract/parse")
+async def contract_parse(request: Request):
+    """上传后先解析合同，并用 flash 模型识别合同主体。"""
+    from db import get_session, get_user_by_id, save_contract_document
     user = await require_current_user(request)
     token = request.cookies.get("session_token")
     session = await get_session(token, user["id"]) if token else None
@@ -3806,23 +4023,105 @@ async def contract_review(request: Request):
     try:
         body = await request.json()
         file_info = body.get("file") or {}
-        note = (body.get("note") or "").strip()
         contract_type = str(body.get("contract_type") or "general").strip()
-        include_references = bool(body.get("include_references", False))
-        issue_limit = _parse_issue_limit(body.get("issue_limit", 12))
     except Exception:
         raise HTTPException(status_code=400, detail="无效的请求")
 
     if not file_info.get("data"):
         raise HTTPException(status_code=400, detail="请上传合同文件")
 
+    fname = file_info.get("name", "合同文件")
+    file_mime = file_info.get("mime_type", "")
+    try:
+        max_input_chars = int(os.getenv("CONTRACT_REVIEW_MAX_INPUT_CHARS", "180000"))
+        description, parsed_doc = await asyncio.to_thread(_build_contract_review_input, file_info, max_input_chars)
+        if "读取失败" in description or "暂不支持" in description:
+            raise ValueError(description[:500])
+        contract_type_name, _ = _get_contract_review_type(contract_type)
+        parsed_doc = parsed_doc or {
+            "source": "text",
+            "document_type": "text",
+            "markdown": description[:120000],
+            "asset_count": 0,
+            "has_layout_json": False,
+        }
+        parsed_doc["filename"] = fname
+        parsed_doc["contract_type"] = contract_type if contract_type in CONTRACT_REVIEW_TYPES else "general"
+        parsed_doc["contract_type_name"] = contract_type_name
+        parties = await _extract_contract_parties(
+            str(parsed_doc.get("markdown") or description),
+            filename=fname,
+            user=await get_user_by_id(user["id"]),
+        )
+        parsed_doc["parties"] = parties.get("parties", [])
+        file_path = await asyncio.to_thread(_save_contract_upload_file, user["id"], file_info)
+        document = await save_contract_document(
+            user_id=user["id"],
+            session_id=token,
+            filename=fname,
+            file_mime=file_mime,
+            file_path=file_path,
+            parsed_doc=parsed_doc,
+            parties=parties,
+            parse_status="parsed",
+        )
+        return {
+            "success": True,
+            "document": document,
+            "document_id": document["id"],
+            "parsed_doc": parsed_doc,
+            "parties": parties.get("parties", []),
+            "parties_meta": parties,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"合同解析失败: {str(e)}")
+
+
+@app.post("/api/contract/review")
+async def contract_review(request: Request):
+    """合同审查工作台：同步解析上传文件并返回结构化风险点。"""
+    from db import get_contract_document, get_session
+    user = await require_current_user(request)
+    token = request.cookies.get("session_token")
+    session = await get_session(token, user["id"]) if token else None
+    if not session:
+        raise HTTPException(status_code=401, detail="请先登录")
+
+    try:
+        body = await request.json()
+        file_info = body.get("file") or {}
+        document_id = str(body.get("document_id") or "").strip()
+        note = (body.get("note") or "").strip()
+        contract_type = str(body.get("contract_type") or "general").strip()
+        review_perspective = str(body.get("review_perspective") or "neutral").strip()
+        represented_party = body.get("represented_party") or {}
+        if not isinstance(represented_party, dict):
+            represented_party = {}
+        include_references = bool(body.get("include_references", False))
+        issue_limit = _parse_issue_limit(body.get("issue_limit", 12))
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的请求")
+
+    document = None
+    if document_id:
+        document = await get_contract_document(document_id, user["id"])
+        if not document:
+            raise HTTPException(status_code=404, detail="解析文档不存在")
+    if not document and not file_info.get("data"):
+        raise HTTPException(status_code=400, detail="请上传合同文件")
+
     try:
         return await _execute_contract_review(
             user_id=user["id"],
             session_id=token,
-            file_info=file_info,
             note=note,
             contract_type=contract_type,
+            file_info=file_info,
+            document=document,
+            review_perspective=review_perspective,
+            represented_party=represented_party,
             include_references=include_references,
             issue_limit=issue_limit,
         )
@@ -3835,7 +4134,7 @@ async def contract_review(request: Request):
 @app.post("/api/contract/review/start")
 async def contract_review_start(request: Request):
     """启动合同审查后台任务，前端轮询任务状态。"""
-    from db import get_session
+    from db import get_contract_document, get_session
     user = await require_current_user(request)
     token = request.cookies.get("session_token")
     session = await get_session(token, user["id"]) if token else None
@@ -3845,18 +4144,28 @@ async def contract_review_start(request: Request):
     try:
         body = await request.json()
         file_info = body.get("file") or {}
+        document_id = str(body.get("document_id") or "").strip()
         note = (body.get("note") or "").strip()
         contract_type = str(body.get("contract_type") or "general").strip()
+        review_perspective = str(body.get("review_perspective") or "neutral").strip()
+        represented_party = body.get("represented_party") or {}
+        if not isinstance(represented_party, dict):
+            represented_party = {}
         include_references = bool(body.get("include_references", False))
         issue_limit = _parse_issue_limit(body.get("issue_limit", 12))
     except Exception:
         raise HTTPException(status_code=400, detail="无效的请求")
 
-    if not file_info.get("data"):
+    document = None
+    if document_id:
+        document = await get_contract_document(document_id, user["id"])
+        if not document:
+            raise HTTPException(status_code=404, detail="解析文档不存在")
+    if not document and not file_info.get("data"):
         raise HTTPException(status_code=400, detail="请上传合同文件")
 
     _cleanup_contract_review_jobs()
-    fname = file_info.get("name", "合同文件")
+    fname = (document or {}).get("filename") or file_info.get("name", "合同文件")
     job_id = uuid.uuid4().hex
     CONTRACT_REVIEW_JOBS[job_id] = {
         "id": job_id,
@@ -3872,14 +4181,19 @@ async def contract_review_start(request: Request):
         "error": "",
         "include_references": include_references,
         "issue_limit": issue_limit,
+        "document_id": document_id,
+        "review_perspective": review_perspective,
     }
     asyncio.create_task(_run_contract_review_job(
         job_id,
         user_id=user["id"],
         session_id=token,
-        file_info=file_info,
+        file_info=None if document else file_info,
+        document=document,
         note=note,
         contract_type=contract_type,
+        review_perspective=review_perspective,
+        represented_party=represented_party,
         issue_limit=issue_limit,
     ))
     return {"success": True, "job": _public_contract_review_job(CONTRACT_REVIEW_JOBS[job_id])}
@@ -3912,6 +4226,8 @@ async def contract_followup_ask(request: Request):
         parsed_doc = body.get("parsed_doc") or {}
         review = body.get("review") or {}
         contract_type = str(body.get("contract_type") or parsed_doc.get("contract_type") or "general").strip()
+        review_perspective = str(review.get("review_perspective") or parsed_doc.get("review_perspective") or "neutral") if isinstance(review, dict) else "neutral"
+        represented_party = review.get("represented_party") or parsed_doc.get("represented_party") or {} if isinstance(review, dict) else {}
         include_references = bool(body.get("include_references", False))
     except Exception:
         raise HTTPException(status_code=400, detail="无效的请求")
@@ -3924,6 +4240,7 @@ async def contract_followup_ask(request: Request):
         raise HTTPException(status_code=400, detail="当前合同没有可用于追问的解析文本")
 
     contract_type_name, _ = _get_contract_review_type(contract_type)
+    perspective_instruction = _build_contract_perspective_instruction(review_perspective, represented_party if isinstance(represented_party, dict) else {})
     reference_context = ""
     references = []
     if include_references:
@@ -3939,6 +4256,7 @@ async def contract_followup_ask(request: Request):
     prompt = f"""你是资深合同审查律师。用户正在围绕同一份合同继续追问。
 
 合同类型：{contract_type_name}
+审查立场：{perspective_instruction}
 用户问题：{question}
 
 已有审查摘要：

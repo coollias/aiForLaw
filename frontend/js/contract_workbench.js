@@ -8,6 +8,9 @@ const ContractWorkbench = {
     review: null,
     sortedIssues: [],
     currentParsedDoc: null,
+    currentDocumentId: '',
+    parties: [],
+    isParsing: false,
     followups: [],
     currentRecord: null,
     jobProgressTimer: null,
@@ -25,6 +28,12 @@ const ContractWorkbench = {
             fileName: document.getElementById('contract-file-name'),
             contractType: document.getElementById('contract-type-select'),
             issueLimit: document.getElementById('contract-issue-limit-select'),
+            partyPanel: document.getElementById('contract-party-panel'),
+            partyStatus: document.getElementById('contract-party-status'),
+            partyList: document.getElementById('contract-party-list'),
+            perspective: document.getElementById('contract-perspective-select'),
+            customPartyField: document.getElementById('contract-custom-party-field'),
+            customPartyInput: document.getElementById('contract-custom-party-input'),
             referenceEnabled: document.getElementById('contract-reference-enabled'),
             note: document.getElementById('contract-note'),
             reviewBtn: document.getElementById('contract-review-btn'),
@@ -59,6 +68,7 @@ const ContractWorkbench = {
         this.el.back.addEventListener('click', () => this.close());
         this.el.historyRefresh.addEventListener('click', () => this.loadHistory());
         this.el.followupSend?.addEventListener('click', () => this.askFollowup());
+        this.el.perspective?.addEventListener('change', () => this.handlePerspectiveChange());
         this.el.followupInput?.addEventListener('keydown', e => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) this.askFollowup();
         });
@@ -94,11 +104,15 @@ const ContractWorkbench = {
         this.review = null;
         this.sortedIssues = [];
         this.currentParsedDoc = null;
+        this.currentDocumentId = '';
+        this.parties = [];
+        this.isParsing = false;
         this.followups = [];
         this.currentRecord = null;
         this.el.fileName.textContent = file.name;
         this.el.summary.classList.add('hidden');
         this.el.issues.innerHTML = '';
+        this.renderParties([], '正在等待解析...');
         this.hideFollowupPanel();
         this.el.status.classList.add('hidden');
         this.hideJobProgress();
@@ -115,11 +129,46 @@ const ContractWorkbench = {
             this.el.renderedDoc.classList.add('hidden');
             this.el.empty.classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.docx')) {
-                this.el.empty.textContent = '开始审查后将在这里展示 MinerU 解析版 Word 原文';
+                this.el.empty.textContent = '正在解析，稍后将在这里展示 MinerU 解析版 Word 原文';
                 this.el.pageInfo.textContent = 'Word 解析预览';
             } else {
-                this.el.empty.textContent = '开始审查后将在这里展示解析后的合同文本';
+                this.el.empty.textContent = '正在解析，稍后将在这里展示解析后的合同文本';
                 this.el.pageInfo.textContent = '文本解析预览';
+            }
+        }
+        this.parseUploadedContract().catch(() => {});
+    },
+
+    async parseUploadedContract() {
+        if (!this.file) return;
+        const parsingFile = this.file;
+        this.isParsing = true;
+        this.el.reviewBtn.disabled = true;
+        this.setStatus('正在解析合同并识别主体...');
+        this.renderParties([], '解析中...');
+        try {
+            const payload = await this.fileToPayload();
+            const data = await API.parseContract(payload, this.el.contractType?.value || 'general');
+            if (this.file !== parsingFile) return;
+            this.currentDocumentId = data.document_id || data.document?.id || '';
+            this.currentParsedDoc = data.parsed_doc || data.document?.parsed_doc || null;
+            this.parties = data.parties || data.document?.parties || [];
+            if (this.currentParsedDoc?.markdown) {
+                this.renderParsedDocument(this.currentParsedDoc, { allowFollowup: false });
+            }
+            this.renderParties(this.parties, this.parties.length ? '请选择我方立场' : '未识别到主体，可自定义');
+            this.setStatus('解析完成，请选择审查设置后开始审查');
+        } catch (e) {
+            if (this.file !== parsingFile) return;
+            this.currentDocumentId = '';
+            this.currentParsedDoc = null;
+            this.parties = [];
+            this.renderParties([], '解析失败，可直接审查');
+            this.setStatus(e.message || '解析失败，可点击开始审查重试');
+        } finally {
+            if (this.file === parsingFile) {
+                this.isParsing = false;
+                this.el.reviewBtn.disabled = false;
             }
         }
     },
@@ -191,9 +240,13 @@ const ContractWorkbench = {
             alert('请先上传合同文件');
             return;
         }
+        if (this.isParsing) {
+            alert('合同仍在解析中，请稍后再开始审查');
+            return;
+        }
         this.el.reviewBtn.disabled = true;
-        this.setStatus('正在解析合同并生成风险点...');
-        this.showJobProgress({ status: 'queued', stage: 'queued', progress: 3, message: '任务已提交，等待开始解析...' });
+        this.setStatus(this.currentDocumentId ? '正在基于解析结果生成风险点...' : '正在解析合同并生成风险点...');
+        this.showJobProgress({ status: 'queued', stage: 'queued', progress: 3, message: this.currentDocumentId ? '任务已提交，等待开始审查...' : '任务已提交，等待开始解析...' });
         this.startJobProgressTicker();
         this.el.issues.innerHTML = '';
         this.el.summary.classList.add('hidden');
@@ -205,10 +258,16 @@ const ContractWorkbench = {
                 this.el.contractType?.value || 'general',
                 this.el.referenceEnabled?.checked || false,
                 this.el.issueLimit?.value || '12',
-                job => this.setReviewJobStatus(job)
+                job => this.setReviewJobStatus(job),
+                {
+                    documentId: this.currentDocumentId,
+                    reviewPerspective: this.getReviewPerspective(),
+                    representedParty: this.getRepresentedParty(),
+                }
             );
             this.review = result.review;
             this.currentRecord = result.record || null;
+            this.currentDocumentId = result.record?.document_id || this.currentDocumentId;
             this.renderParsedDocument(result.parsed_doc);
             this.renderReview();
             this.setStatus('审查完成');
@@ -347,7 +406,78 @@ const ContractWorkbench = {
         if (!ok) throw new Error('copy failed');
     },
 
-    renderParsedDocument(parsedDoc) {
+    renderParties(parties = [], status = '') {
+        if (!this.el.partyPanel || !this.el.partyList) return;
+        this.el.partyPanel.classList.remove('hidden');
+        this.el.partyStatus.textContent = status || '';
+        if (!parties.length) {
+            this.el.partyList.innerHTML = '<div class="history-empty">暂未识别到明确主体</div>';
+            if (this.el.perspective) {
+                this.el.perspective.innerHTML = `
+                    <option value="neutral">中立审查</option>
+                    <option value="custom">自定义我方</option>
+                `;
+                this.el.perspective.value = 'neutral';
+            }
+            this.handlePerspectiveChange();
+            return;
+        }
+        this.el.partyList.innerHTML = parties.map((party, index) => `
+            <label class="party-option">
+                <input type="radio" name="contract-party-choice" value="${index}">
+                <span>
+                    <strong>${this.escape(party.role || '合同主体')}：${this.escape(party.name || '未命名主体')}</strong>
+                    ${party.aliases?.length ? `<span>别称：${party.aliases.map(alias => this.escape(alias)).join('、')}</span>` : ''}
+                    ${party.source_quote ? `<small>${this.escape(party.source_quote)}</small>` : ''}
+                </span>
+            </label>
+        `).join('');
+        this.el.partyList.querySelectorAll('input[name="contract-party-choice"]').forEach(input => {
+            input.addEventListener('change', () => {
+                if (this.el.perspective) this.el.perspective.value = `party:${input.value}`;
+                this.handlePerspectiveChange();
+            });
+        });
+        if (this.el.perspective) {
+            const current = this.el.perspective.value;
+            this.el.perspective.innerHTML = `
+                <option value="neutral">中立审查</option>
+                ${parties.map((party, index) => `<option value="party:${index}">代表${this.escape(party.role || '主体')}${party.name ? ` · ${this.escape(party.name)}` : ''}</option>`).join('')}
+                <option value="custom">自定义我方</option>
+            `;
+            this.el.perspective.value = current && [...this.el.perspective.options].some(opt => opt.value === current) ? current : 'neutral';
+        }
+        this.handlePerspectiveChange();
+    },
+
+    handlePerspectiveChange() {
+        const value = this.el.perspective?.value || 'neutral';
+        const isCustom = value === 'custom';
+        this.el.customPartyField?.classList.toggle('hidden', !isCustom);
+        const match = value.match(/^party:(\d+)$/);
+        this.el.partyList?.querySelectorAll('input[name="contract-party-choice"]').forEach(input => {
+            input.checked = match ? input.value === match[1] : false;
+        });
+    },
+
+    getRepresentedParty() {
+        const value = this.el.perspective?.value || 'neutral';
+        if (value === 'neutral') return {};
+        if (value === 'custom') {
+            const raw = (this.el.customPartyInput?.value || '').trim();
+            return raw ? { role: '自定义我方', name: raw } : {};
+        }
+        const match = value.match(/^party:(\d+)$/);
+        if (!match) return {};
+        return this.parties[Number(match[1])] || {};
+    },
+
+    getReviewPerspective() {
+        const value = this.el.perspective?.value || 'neutral';
+        return value === 'neutral' ? 'neutral' : 'represented_party';
+    },
+
+    renderParsedDocument(parsedDoc, options = {}) {
         if (!parsedDoc?.markdown) return;
         this.currentParsedDoc = parsedDoc;
         const docName = parsedDoc.document_type === 'word' ? 'Word' : parsedDoc.document_type === 'pdf' ? 'PDF' : '文档';
@@ -366,7 +496,7 @@ const ContractWorkbench = {
             <div class="mineru-doc">${this.renderMarkdown(parsedDoc.markdown)}</div>
         `;
         this.applyRiskHighlights(this.sortedIssues);
-        this.showFollowupPanel();
+        if (options.allowFollowup !== false) this.showFollowupPanel();
     },
 
     async loadHistory() {
@@ -417,6 +547,9 @@ const ContractWorkbench = {
         this.review = record.review || { issues: [] };
         this.sortedIssues = [];
         this.currentParsedDoc = record.parsed_doc || null;
+        this.currentDocumentId = record.document_id || '';
+        this.parties = [];
+        this.isParsing = false;
         this.followups = [];
         this.file = null;
         this.filePayload = null;
@@ -425,10 +558,19 @@ const ContractWorkbench = {
         this.el.fileName.textContent = record.filename || '历史审查记录';
         this.el.note.value = record.note || '';
         if (this.el.contractType) {
-            this.el.contractType.value = record.parsed_doc?.contract_type || 'general';
+            this.el.contractType.value = record.contract_type || record.parsed_doc?.contract_type || 'general';
         }
         if (this.el.referenceEnabled) {
-            this.el.referenceEnabled.checked = !!record.review?.references?.length;
+            this.el.referenceEnabled.checked = !!record.include_references || !!record.review?.references?.length;
+        }
+        this.renderParties([], record.review_perspective && record.review_perspective !== 'neutral' ? '历史记录：按指定立场审查' : '历史记录');
+        if (record.review_perspective && record.review_perspective !== 'neutral' && this.el.perspective) {
+            this.el.perspective.value = 'custom';
+            if (this.el.customPartyInput) {
+                const party = record.represented_party || record.review?.represented_party || {};
+                this.el.customPartyInput.value = [party.role, party.name].filter(Boolean).join(' ');
+            }
+            this.handlePerspectiveChange();
         }
         this.el.canvas.classList.add('hidden');
         this.el.empty.classList.add('hidden');

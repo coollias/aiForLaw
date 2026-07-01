@@ -249,6 +249,24 @@
                                 <option value="0">无限制</option>
                             </select>
                         </label>
+                        <section class="contract-party-panel hidden" id="contract-party-panel">
+                            <div class="party-panel-head">
+                                <strong>合同主体</strong>
+                                <span id="contract-party-status">上传后自动识别</span>
+                            </div>
+                            <div id="contract-party-list" class="contract-party-list"></div>
+                            <label class="contract-type-field" for="contract-perspective-select">
+                                <span>我方立场</span>
+                                <select id="contract-perspective-select">
+                                    <option value="neutral">中立审查</option>
+                                    <option value="custom">自定义我方</option>
+                                </select>
+                            </label>
+                            <label class="contract-type-field hidden" id="contract-custom-party-field" for="contract-custom-party-input">
+                                <span>我方名称/角色</span>
+                                <input id="contract-custom-party-input" type="text" placeholder="例如：乙方 上海某公司 / 承租方">
+                            </label>
+                        </section>
                         <label class="contract-reference-toggle">
                             <input type="checkbox" id="contract-reference-enabled">
                             <span>
